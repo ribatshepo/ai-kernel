@@ -1,0 +1,5 @@
+# Ignore Docker files
+.Dockerignore
+# Software Documentation
+Software_Documents
+#
