@@ -1,53 +1,32 @@
-# AiKernel gitignore file
+# Ignore Docker files
+.Dockerignore
+# Software Documentation
+Software_Documents
+#OpenSpec files
+AGENTS.md
+openspec
+# Prompt files (private)
+.github/prompts/
 
-# Build outputs
+# .NET build outputs
 bin/
 obj/
 out/
+build/
 
 # Visual Studio temporary files
 .vs/
 *.user
 *.suo
-*.userprefs
-*.pidb
-*.pdb
-*.mdb
-*.exe
-*.dll
-*.cache
-*.ilk
-*.log
-[Bb]in/
-[Dd]ebug*/
-[Rr]elease*/
-Ankh.NoLoad
-
-# Visual Studio Code
-.vscode/launch.json.bak
-.vscode/tasks.json.bak
 
 # Rider
 .idea/
-*.sln.iml
 
-# MonoDevelop
-*.userprefs
+# Logs
+*.log
 
-# Build results
-[Dd]ebug/
-[Dd]ebugPublic/
-[Rr]elease/
-[Rr]eleases/
-x64/
-x86/
-build/
-bld/
-[Bb]in/
-[Oo]bj/
-
-# MSTest test results
-TestResults/
+# Docker volumes and data
+data/
 
 # NUnit
 *.VisualState.xml
