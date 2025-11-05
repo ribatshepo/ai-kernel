@@ -1,0 +1,24 @@
+{
+  "sdk": {
+    "version": "8.0.415",
+    "includePrerelease": false
+  },
+  "dotnet": {
+    "path": "/home/tshepo/.dotnet/dotnet"
+  },
+  "fileOptions": {
+    "systemExcludeSearchPatterns": [
+      "**/node_modules/**/*",
+      "**/bin/**/*",
+      "**/obj/**/*",
+      "**/.git/**/*"
+    ]
+  },
+  "msBuild": {
+    "loadProjectsOnDemand": false
+  },
+  "formattingOptions": {
+    "enableEditorConfigSupport": true,
+    "organizeImports": true
+  }
+}
