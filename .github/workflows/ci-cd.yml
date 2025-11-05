@@ -5,15 +5,41 @@ on:
         branches: [main, develop]
     pull_request:
         branches: [main, develop]
+        types: [opened, synchronize, reopened]
 
 env:
     REGISTRY: ghcr.io
     IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+    # Branch validation - enforce Git Flow rules
+    branch-validation:
+        runs-on: ubuntu-latest
+        if: github.event_name == 'pull_request'
+        steps:
+            - name: Validate Git Flow branch rules
+              run: |
+                  SOURCE="${{ github.head_ref }}"
+                  TARGET="${{ github.base_ref }}"
+                  
+                  # Simple validation rules
+                  if [[ "$TARGET" == "main" && "$SOURCE" != "develop" ]]; then
+                    echo "ERROR: Only develop can merge to main"
+                    exit 1
+                  fi
+                  
+                  if [[ "$TARGET" == "develop" && ! "$SOURCE" =~ ^(feat|fix)/ ]]; then
+                    echo "ERROR: Only feat/* and fix/* can merge to develop"
+                    exit 1
+                  fi
+                  
+                  echo "Git Flow validation passed"
+
     # Project structure validation
     project-validation:
+        needs: [branch-validation]
         runs-on: ubuntu-latest
+        if: always() && (needs.branch-validation.result == 'success' || needs.branch-validation.result == 'skipped')
         steps:
             - name: Checkout code
               uses: actions/checkout@v4
@@ -51,13 +77,15 @@ jobs:
                   fi
 
                   # Validate Docker configuration exists
-                  if [[ ! -f "Dockerfile" ]]; then
-                    echo "ERROR: Missing Dockerfile"
-                    exit 1
-                  fi
-
                   if [[ ! -f "docker-compose.yml" ]]; then
                     echo "ERROR: Missing docker-compose.yml"
+                    exit 1
+                  fi
+                  
+                  # Validate service-specific Dockerfiles exist
+                  dockerfile_count=$(find src -name "Dockerfile" | wc -l)
+                  if [[ $dockerfile_count -lt 1 ]]; then
+                    echo "ERROR: No service-specific Dockerfiles found in src directories"
                     exit 1
                   fi
 
@@ -65,8 +93,9 @@ jobs:
 
     # Code quality and linting
     code-quality:
-        needs: project-validation
+        needs: [branch-validation, project-validation]
         runs-on: ubuntu-latest
+        if: always() && (needs.branch-validation.result == 'success' || needs.branch-validation.result == 'skipped') && needs.project-validation.result == 'success'
 
         steps:
             - name: Checkout code
@@ -77,30 +106,23 @@ jobs:
               with:
                   dotnet-version: 8.0.x
 
-            - name: Restore dependencies
-              run: dotnet restore
-
-            - name: Build for analysis
-              run: dotnet build --no-restore --configuration Release
-
-            - name: Validate Docker files
+            - name: Build solution
               run: |
-                  echo "Validating Docker configurations..."
+                dotnet restore
+                dotnet build --no-restore --configuration Release
 
-                  # Validate docker-compose syntax  
-                  if command -v docker-compose &> /dev/null; then
-                    if ! docker-compose config > /dev/null 2>&1; then
-                      echo "ERROR: docker-compose.yml validation failed"
-                      exit 1
-                    fi
-                  fi
-
-                  echo "SUCCESS: Docker configuration validation passed"
+            - name: Validate Docker compose
+              run: |
+                if command -v docker-compose &> /dev/null; then
+                  docker-compose config > /dev/null
+                fi
+                echo "Docker validation passed"
 
     # Testing
     test:
-        needs: project-validation
+        needs: [branch-validation, project-validation]
         runs-on: ubuntu-latest
+        if: always() && (needs.branch-validation.result == 'success' || needs.branch-validation.result == 'skipped') && needs.project-validation.result == 'success'
 
         services:
             postgres:
@@ -170,7 +192,7 @@ jobs:
                   path: TestResults/
 
             - name: Upload code coverage
-              uses: codecov/codecov-action@v3
+              uses: codecov/codecov-action@v4
               with:
                   directory: TestResults/
                   flags: unittests
@@ -178,8 +200,13 @@ jobs:
 
     # Security scanning
     security:
-        needs: project-validation
+        needs: [branch-validation, project-validation]
         runs-on: ubuntu-latest
+        if: always() && (needs.branch-validation.result == 'success' || needs.branch-validation.result == 'skipped') && needs.project-validation.result == 'success'
+        permissions:
+            actions: read
+            contents: read
+            security-events: write
 
         steps:
             - name: Checkout code
@@ -196,8 +223,8 @@ jobs:
             - name: Run security audit
               run: dotnet list package --vulnerable --include-transitive
 
-            - name: CodeQL Analysis
-              uses: github/codeql-action/init@v2
+            - name: Initialize CodeQL
+              uses: github/codeql-action/init@v3
               with:
                   languages: csharp
 
@@ -205,4 +232,4 @@ jobs:
               run: dotnet build --no-restore
 
             - name: Perform CodeQL Analysis
-              uses: github/codeql-action/analyze@v2
+              uses: github/codeql-action/analyze@v3

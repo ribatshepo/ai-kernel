@@ -4,8 +4,8 @@ services:
   # Main orchestration kernel
   aikernel-core:
     build:
-      context: .
-      dockerfile: Dockerfile.dev
+      context: ./src/Core
+      dockerfile: Dockerfile
     ports:
       - "8080:8080"
     environment:
