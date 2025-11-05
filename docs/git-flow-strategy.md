@@ -37,9 +37,13 @@ This document outlines the branch protection rules and Git Flow strategy for the
 ## CI/CD Behavior
 
 ### Continuous Integration
-- **Triggers**: Push to `main` or `develop`, Pull Requests to `main` or `develop`
-- **Jobs**: Project validation, code quality, testing, security scanning
-- **Purpose**: Ensure code quality before merging
+- **Triggers**: 
+  - Push to `main` or `develop` branches (quality gates)
+  - Pull Requests to `main` or `develop` branches (validation before merge)
+- **Jobs**: 
+  - Branch validation (enforces Git Flow merge rules)
+  - Project validation, code quality, testing, security scanning
+- **Purpose**: Ensure code quality and enforce Git Flow rules at critical integration points
 
 ### Branch Protection Rules to Configure in GitHub
 
@@ -47,27 +51,27 @@ This document outlines the branch protection rules and Git Flow strategy for the
    ```
    - Require pull request reviews before merging
    - Require status checks to pass before merging
-   - Required status checks: project-validation, code-quality, test, security
+   - Required status checks: branch-validation, project-validation, code-quality, test, security
    - Require branches to be up to date before merging
    - Include administrators
-   - Allow only develop branch to merge to main
+   - Restrict pushes that create files (only allow develop branch merges)
    ```
 
 2. **Develop Branch Protection**:
    ```
    - Require pull request reviews before merging  
    - Require status checks to pass before merging
-   - Required status checks: project-validation, code-quality, test, security
+   - Required status checks: branch-validation, project-validation, code-quality, test, security
    - Require branches to be up to date before merging
-   - Allow feat/* and fix/* branches to merge to develop
+   - Restrict pushes that create files (only allow feat/* and fix/* merges)
    ```
 
 ## Workflow
 
 1. Create feature branch from develop: `git checkout -b feat/new-feature develop`
-2. Develop and commit changes on feature branch
+2. Develop and commit changes on feature branch (no CI overhead during development)
 3. Create Pull Request from `feat/new-feature` to `develop`
-4. CI/CD runs validation, code quality, tests, and security scans
+4. **CI/CD runs on PR** - validation, code quality, tests, and security scans
 5. Code review and approval required
 6. Merge to develop after approvals and CI success
 7. For releases: Create Pull Request from `develop` to `main`
