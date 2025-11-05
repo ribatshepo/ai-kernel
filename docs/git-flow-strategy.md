@@ -139,9 +139,3 @@ All Pull Requests must pass these required status checks:
 2. Validate all CI/CD checks pass (branch-validation will approve feat/* → develop)
 3. Merge to develop branch following Git Flow strategy
 4. Continue with remaining .NET projects and health checks implementation
-
-This branch demonstrates the Git Flow strategy by:
-- ✅ Being created from develop branch concept
-- ✅ Following feat/* naming convention  
-- ✅ Ready to merge only to develop (not main)
-- ✅ Will trigger all required status checks when PR is created

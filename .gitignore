@@ -7,6 +7,7 @@ AGENTS.md
 openspec
 # Prompt files (private)
 .github/prompts/
+.github/instructions/
 
 # .NET build outputs
 bin/
