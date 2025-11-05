@@ -2,4 +2,6 @@
 .Dockerignore
 # Software Documentation
 Software_Documents
-#
+#OpenSpec files
+AGENTS.md
+openspec
