@@ -5,6 +5,7 @@ on:
         branches: [main, develop]
     pull_request:
         branches: [main, develop]
+        types: [opened, synchronize, reopened]
 
 env:
     REGISTRY: ghcr.io
@@ -170,7 +171,7 @@ jobs:
                   path: TestResults/
 
             - name: Upload code coverage
-              uses: codecov/codecov-action@v3
+              uses: codecov/codecov-action@v4
               with:
                   directory: TestResults/
                   flags: unittests
@@ -180,6 +181,10 @@ jobs:
     security:
         needs: project-validation
         runs-on: ubuntu-latest
+        permissions:
+            actions: read
+            contents: read
+            security-events: write
 
         steps:
             - name: Checkout code
@@ -196,8 +201,8 @@ jobs:
             - name: Run security audit
               run: dotnet list package --vulnerable --include-transitive
 
-            - name: CodeQL Analysis
-              uses: github/codeql-action/init@v2
+            - name: Initialize CodeQL
+              uses: github/codeql-action/init@v3
               with:
                   languages: csharp
 
@@ -205,4 +210,4 @@ jobs:
               run: dotnet build --no-restore
 
             - name: Perform CodeQL Analysis
-              uses: github/codeql-action/analyze@v2
+              uses: github/codeql-action/analyze@v3
