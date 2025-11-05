@@ -5,4 +5,4 @@ Software_Documents
 #OpenSpec files
 AGENTS.md
 openspec
-.github/prompts
+.github/prompts/*
