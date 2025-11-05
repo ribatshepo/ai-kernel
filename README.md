@@ -5,6 +5,8 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)]()
+[![.NET Services CI/CD](https://github.com/ribatshepo/ai-kernel/actions/workflows/dotnet-services.yml/badge.svg)](https://github.com/ribatshepo/ai-kernel/actions/workflows/dotnet-services.yml)
+[![CI/CD Pipeline](https://github.com/ribatshepo/ai-kernel/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/ribatshepo/ai-kernel/actions/workflows/ci-cd.yml)
 
 ## Overview
 
