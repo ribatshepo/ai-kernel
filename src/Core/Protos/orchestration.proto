@@ -1,0 +1,340 @@
+syntax = "proto3";
+
+package aikernel.core;
+
+import "google/protobuf/timestamp.proto";
+
+option csharp_namespace = "AiKernel.Core.Grpc";
+
+// Resource management service for the orchestration kernel
+service ResourceManager {
+  // Allocate resources for a workload
+  rpc AllocateResources(AllocateResourcesRequest) returns (AllocateResourcesResponse);
+  
+  // Deallocate resources
+  rpc DeallocateResources(DeallocateResourcesRequest) returns (DeallocateResourcesResponse);
+  
+  // Get resource status
+  rpc GetResourceStatus(GetResourceStatusRequest) returns (GetResourceStatusResponse);
+  
+  // Monitor resource usage
+  rpc MonitorResources(MonitorResourcesRequest) returns (stream ResourceMetrics);
+}
+
+// Policy evaluation service
+service PolicyEngine {
+  // Evaluate access policy
+  rpc EvaluatePolicy(EvaluatePolicyRequest) returns (EvaluatePolicyResponse);
+  
+  // Update policies
+  rpc UpdatePolicy(UpdatePolicyRequest) returns (UpdatePolicyResponse);
+  
+  // List policies
+  rpc ListPolicies(ListPoliciesRequest) returns (ListPoliciesResponse);
+}
+
+// Event coordination service
+service EventCoordinator {
+  // Publish event
+  rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
+  
+  // Subscribe to events
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event);
+  
+  // Get event history
+  rpc GetEventHistory(GetEventHistoryRequest) returns (GetEventHistoryResponse);
+}
+
+// Resource allocation request
+message AllocateResourcesRequest {
+  string workload_id = 1;
+  ResourceRequirements requirements = 2;
+  repeated string policies = 3;
+  map<string, string> metadata = 4;
+}
+
+// Resource allocation response
+message AllocateResourcesResponse {
+  string allocation_id = 1;
+  repeated AllocatedResource resources = 2;
+  AllocationStatus status = 3;
+  string message = 4;
+}
+
+// Resource requirements specification
+message ResourceRequirements {
+  CpuRequirements cpu = 1;
+  MemoryRequirements memory = 2;
+  GpuRequirements gpu = 3;
+  StorageRequirements storage = 4;
+  NetworkRequirements network = 5;
+}
+
+// CPU requirements
+message CpuRequirements {
+  double cores = 1;
+  string architecture = 2; // x86_64, arm64
+  repeated string features = 3; // avx512, sse4, etc.
+}
+
+// Memory requirements
+message MemoryRequirements {
+  int64 bytes = 1;
+  MemoryType type = 2;
+}
+
+// GPU requirements
+message GpuRequirements {
+  int32 count = 1;
+  int64 memory_bytes = 2;
+  string compute_capability = 3;
+}
+
+// Storage requirements
+message StorageRequirements {
+  int64 bytes = 1;
+  StorageType type = 2;
+  int32 iops = 3;
+}
+
+// Network requirements
+message NetworkRequirements {
+  int64 bandwidth_bps = 1;
+  int32 latency_ms = 2;
+}
+
+// Allocated resource
+message AllocatedResource {
+  string resource_id = 1;
+  ResourceType type = 2;
+  string location = 3;
+  map<string, string> properties = 4;
+}
+
+// Resource deallocation request
+message DeallocateResourcesRequest {
+  string allocation_id = 1;
+  repeated string resource_ids = 2;
+}
+
+// Resource deallocation response
+message DeallocateResourcesResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+// Resource status request
+message GetResourceStatusRequest {
+  string allocation_id = 1;
+}
+
+// Resource status response
+message GetResourceStatusResponse {
+  AllocationStatus status = 1;
+  repeated ResourceStatus resources = 2;
+  ResourceMetrics metrics = 3;
+}
+
+// Resource monitoring request
+message MonitorResourcesRequest {
+  string allocation_id = 1;
+  int32 interval_seconds = 2;
+}
+
+// Resource metrics
+message ResourceMetrics {
+  string allocation_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  CpuMetrics cpu = 3;
+  MemoryMetrics memory = 4;
+  GpuMetrics gpu = 5;
+  StorageMetrics storage = 6;
+  NetworkMetrics network = 7;
+}
+
+// CPU metrics
+message CpuMetrics {
+  double utilization_percent = 1;
+  double load_average = 2;
+  int32 active_cores = 3;
+}
+
+// Memory metrics
+message MemoryMetrics {
+  int64 used_bytes = 1;
+  int64 available_bytes = 2;
+  double utilization_percent = 3;
+}
+
+// GPU metrics
+message GpuMetrics {
+  repeated GpuDevice devices = 1;
+}
+
+// GPU device metrics
+message GpuDevice {
+  string device_id = 1;
+  double utilization_percent = 2;
+  int64 memory_used_bytes = 3;
+  int64 memory_total_bytes = 4;
+  double temperature_celsius = 5;
+}
+
+// Storage metrics
+message StorageMetrics {
+  int64 used_bytes = 1;
+  int64 available_bytes = 2;
+  int32 read_iops = 3;
+  int32 write_iops = 4;
+}
+
+// Network metrics
+message NetworkMetrics {
+  int64 bytes_sent = 1;
+  int64 bytes_received = 2;
+  int32 connections_active = 3;
+}
+
+// Policy evaluation request
+message EvaluatePolicyRequest {
+  string subject = 1;      // Who is making the request
+  string action = 2;       // What action they want to perform
+  string resource = 3;     // What resource they want to access
+  map<string, string> context = 4; // Additional context (time, location, etc.)
+}
+
+// Policy evaluation response
+message EvaluatePolicyResponse {
+  PolicyDecision decision = 1;
+  string reason = 2;
+  repeated string applied_policies = 3;
+  map<string, string> obligations = 4; // Additional requirements
+}
+
+// Policy update request
+message UpdatePolicyRequest {
+  string policy_id = 1;
+  string policy_content = 2;
+  string version = 3;
+}
+
+// Policy update response
+message UpdatePolicyResponse {
+  bool success = 1;
+  string message = 2;
+  string new_version = 3;
+}
+
+// List policies request
+message ListPoliciesRequest {
+  string filter = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+// List policies response
+message ListPoliciesResponse {
+  repeated PolicyInfo policies = 1;
+  string next_page_token = 2;
+}
+
+// Policy information
+message PolicyInfo {
+  string policy_id = 1;
+  string name = 2;
+  string description = 3;
+  string version = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+  bool active = 7;
+}
+
+// Event publishing request
+message PublishEventRequest {
+  Event event = 1;
+}
+
+// Event publishing response
+message PublishEventResponse {
+  string event_id = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Event subscription request
+message SubscribeEventsRequest {
+  repeated string event_types = 1;
+  string filter = 2;
+}
+
+// Event history request
+message GetEventHistoryRequest {
+  repeated string event_types = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  int32 limit = 4;
+}
+
+// Event history response
+message GetEventHistoryResponse {
+  repeated Event events = 1;
+  string continuation_token = 2;
+}
+
+// Event message
+message Event {
+  string event_id = 1;
+  string event_type = 2;
+  string source = 3;
+  google.protobuf.Timestamp timestamp = 4;
+  map<string, string> data = 5;
+  string correlation_id = 6;
+}
+
+// Enums
+enum AllocationStatus {
+  ALLOCATION_STATUS_UNSPECIFIED = 0;
+  ALLOCATION_STATUS_PENDING = 1;
+  ALLOCATION_STATUS_ALLOCATED = 2;
+  ALLOCATION_STATUS_FAILED = 3;
+  ALLOCATION_STATUS_DEALLOCATED = 4;
+}
+
+enum ResourceType {
+  RESOURCE_TYPE_UNSPECIFIED = 0;
+  RESOURCE_TYPE_CPU = 1;
+  RESOURCE_TYPE_MEMORY = 2;
+  RESOURCE_TYPE_GPU = 3;
+  RESOURCE_TYPE_STORAGE = 4;
+  RESOURCE_TYPE_NETWORK = 5;
+}
+
+enum MemoryType {
+  MEMORY_TYPE_UNSPECIFIED = 0;
+  MEMORY_TYPE_SYSTEM = 1;
+  MEMORY_TYPE_GPU = 2;
+  MEMORY_TYPE_HIGH_BANDWIDTH = 3;
+}
+
+enum StorageType {
+  STORAGE_TYPE_UNSPECIFIED = 0;
+  STORAGE_TYPE_SSD = 1;
+  STORAGE_TYPE_HDD = 2;
+  STORAGE_TYPE_NVME = 3;
+  STORAGE_TYPE_NETWORK = 4;
+}
+
+enum ResourceStatus {
+  RESOURCE_STATUS_UNSPECIFIED = 0;
+  RESOURCE_STATUS_HEALTHY = 1;
+  RESOURCE_STATUS_DEGRADED = 2;
+  RESOURCE_STATUS_FAILED = 3;
+  RESOURCE_STATUS_MAINTENANCE = 4;
+}
+
+enum PolicyDecision {
+  POLICY_DECISION_UNSPECIFIED = 0;
+  POLICY_DECISION_ALLOW = 1;
+  POLICY_DECISION_DENY = 2;
+  POLICY_DECISION_CONDITIONAL = 3;
+}

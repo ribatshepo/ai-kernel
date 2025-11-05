@@ -1,0 +1,48 @@
+# Development environment
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS development
+WORKDIR /src
+
+# Install development tools
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    vim \
+    htop \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install .NET tools
+RUN dotnet tool install -g dotnet-ef
+RUN dotnet tool install -g dotnet-aspnet-codegenerator
+RUN dotnet tool install -g dotnet-outdated-tool
+
+# Add tools to PATH
+ENV PATH="/root/.dotnet/tools:${PATH}"
+
+# Copy solution and project files
+COPY AiKernel.sln ./
+COPY src/Core/*.csproj ./src/Core/
+COPY src/Proxy/*.csproj ./src/Proxy/
+COPY src/Secrets/*.csproj ./src/Secrets/
+COPY src/Catalog/*.csproj ./src/Catalog/
+COPY src/Intelligence/*.csproj ./src/Intelligence/
+
+# Restore dependencies
+RUN dotnet restore
+
+# Copy source code
+COPY . .
+
+# Set development environment
+ENV ASPNETCORE_ENVIRONMENT=Development
+ENV DOTNET_USE_POLLING_FILE_WATCHER=true
+ENV ASPNETCORE_URLS=http://+:8080
+
+# Expose ports
+EXPOSE 8080
+
+# Set working directory for development
+WORKDIR /src/src/Core
+
+# Default command for development
+CMD ["dotnet", "watch", "run", "--project", "AiKernel.Core.csproj"]
