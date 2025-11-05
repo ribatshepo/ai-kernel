@@ -1,0 +1,6 @@
+@AiKernel.Core_HostAddress = http://localhost:5169
+
+GET {{AiKernel.Core_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
