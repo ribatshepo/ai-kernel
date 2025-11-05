@@ -89,13 +89,15 @@ jobs:
                   fi
 
                   # Validate Docker configuration exists
-                  if [[ ! -f "Dockerfile" ]]; then
-                    echo "ERROR: Missing Dockerfile"
-                    exit 1
-                  fi
-
                   if [[ ! -f "docker-compose.yml" ]]; then
                     echo "ERROR: Missing docker-compose.yml"
+                    exit 1
+                  fi
+                  
+                  # Validate service-specific Dockerfiles exist
+                  dockerfile_count=$(find src -name "Dockerfile" | wc -l)
+                  if [[ $dockerfile_count -lt 1 ]]; then
+                    echo "ERROR: No service-specific Dockerfiles found in src directories"
                     exit 1
                   fi
 
