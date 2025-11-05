@@ -1,48 +1,22 @@
 {
-    "dotnet.defaultSolution": "AiKernel.sln",
-    "omnisharp.enableRoslynAnalyzers": true,
-    "omnisharp.enableEditorConfigSupport": true,
-    "editor.formatOnSave": true,
-    "editor.codeActionsOnSave": {
-        "source.fixAll": true,
-        "source.organizeImports": true
-    },
-    "files.exclude": {
-        "**/bin": true,
-        "**/obj": true,
-        "**/.vs": true
-    },
-    "search.exclude": {
-        "**/bin": true,
-        "**/obj": true,
-        "**/node_modules": true,
-        "**/.git": true
-    },
-    "csharp.semanticHighlighting.enabled": true,
-    "csharp.inlayHints.parameters.enabled": true,
-    "csharp.inlayHints.types.enabled": true,
-    "docker.defaultRegistryPath": "ghcr.io",
-    "yaml.schemas": {
-        "https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json": [
-            "docker-compose*.yml",
-            "docker-compose*.yaml"
-        ]
-    },
-    "files.associations": {
-        "*.proto": "proto3"
-    },
-    "terminal.integrated.defaultProfile.linux": "bash",
-    "git.autofetch": true,
-    "git.enableSmartCommit": true,
-    "extensions.recommendations": [
-        "ms-dotnettools.csharp",
-        "ms-dotnettools.vscode-dotnet-runtime",
-        "ms-vscode.vscode-json",
-        "ms-azuretools.vscode-docker",
-        "redhat.vscode-yaml",
-        "zxh404.vscode-proto3",
-        "ms-vscode.test-adapter-converter",
-        "github.copilot",
-        "github.copilot-chat"
-    ]
+  "dotnet.defaultSolution": "AiKernel.sln",
+  "omnisharp.path": "latest",
+  "omnisharp.useGlobalMono": "never",
+  "omnisharp.dotNetCliPaths": [
+    "/home/tshepo/.dotnet/dotnet",
+    "/snap/bin/dotnet"
+  ],
+  "terminal.integrated.env.linux": {
+    "PATH": "/home/tshepo/.dotnet:${env:PATH}"
+  },
+  "omnisharp.projectLoadTimeout": 120,
+  "omnisharp.enableRoslynAnalyzers": true,
+  "omnisharp.enableEditorConfigSupport": true,
+  "omnisharp.enableAsyncCompletion": true,
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  },
+  "dotnet.completion.showCompletionItemsFromUnimportedNamespaces": true,
+  "dotnet.formatting.organizeImportsOnFormat": true
 }
