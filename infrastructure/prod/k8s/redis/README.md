@@ -45,7 +45,7 @@ kubectl create secret generic redis-password \
 ```bash
 kubectl create namespace aikernel --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl apply -k infrastructure/kubernetes/redis/
+kubectl apply -k infrastructure/prod/k8s/redis/
 ```
 
 ### 4. Verify Deployment

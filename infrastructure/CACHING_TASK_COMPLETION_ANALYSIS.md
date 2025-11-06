@@ -11,7 +11,7 @@ This document provides a comprehensive analysis of the "Implement distributed ca
 
 | Sub-Task | Status | Implementation Details | Files | Verification |
 |----------|--------|------------------------|-------|--------------|
-| Deploy Redis cluster (7.0+) with replication factor 3 | [x] COMPLETE | Redis 7.2-alpine StatefulSet with 3 replicas, Sentinel for HA, pod anti-affinity | `infrastructure/kubernetes/redis/redis-statefulset.yaml` | Line 57: `replicas: 3`<br>Line 91: `image: redis:7.2-alpine` |
+| Deploy Redis cluster (7.0+) with replication factor 3 | [x] COMPLETE | Redis 7.2-alpine StatefulSet with 3 replicas, Sentinel for HA, pod anti-affinity | `infrastructure/prod/k8s/redis/redis-statefulset.yaml` | Line 57: `replicas: 3`<br>Line 91: `image: redis:7.2-alpine` |
 | Configure Redis for distributed session storage | [x] COMPLETE | ASP.NET Core Session with Redis backing, DataProtection keys persisted to Redis | `src/Core/AIKernel.Core.Catalog.API/Caching/SessionStorageExtensions.cs` | Lines 18-26: Session config<br>Lines 29-31: DataProtection |
 | Implement cache-aside pattern with 5-minute TTL | [x] COMPLETE | Decorator pattern repositories with cache-aside, 300s TTL for resources | `src/Core/AIKernel.Core.Catalog/Caching/CachedResourceRepository.cs`<br>`CachingConfiguration.cs` | Lines 33-56: Cache-aside pattern<br>Line 27: `ResourceCacheTtlSeconds = 300` |
 | Build cache invalidation mechanism | [x] COMPLETE | Pattern-based invalidation, event-driven updates on mutations | `src/Core/AIKernel.Core.Catalog/Caching/CachedResourceRepository.cs` | Lines 207-253: `InvalidateRelatedCachesAsync()`<br>`RedisDistributedCacheService.cs` Lines 138-186: `RemoveByPatternAsync()` |
@@ -24,9 +24,9 @@ This document provides a comprehensive analysis of the "Implement distributed ca
 ### 1. Deploy Redis Cluster (7.0+) with Replication Factor 3
 
 **Implementation Files:**
-- `infrastructure/kubernetes/redis/redis-statefulset.yaml` (379 lines)
-- `infrastructure/kubernetes/redis/redis-configmap.yaml` (60 lines)
-- `infrastructure/kubernetes/redis/redis-pdb.yaml` (64 lines)
+- `infrastructure/prod/k8s/redis/redis-statefulset.yaml` (379 lines)
+- `infrastructure/prod/k8s/redis/redis-configmap.yaml` (60 lines)
+- `infrastructure/prod/k8s/redis/redis-pdb.yaml` (64 lines)
 
 **Key Features:**
 - Redis version: 7.2-alpine (latest stable)
@@ -266,7 +266,7 @@ Evictions: 1234, Errors: 5, Bytes Written: 45,678,901
 
 **Implementation Files:**
 - `infrastructure/grafana/redis-cache-dashboard.json` (16KB, 694 lines)
-- `infrastructure/kubernetes/redis/redis-monitoring.yaml` (ServiceMonitor + Alerts)
+- `infrastructure/prod/k8s/redis/redis-monitoring.yaml` (ServiceMonitor + Alerts)
 - `src/Core/AIKernel.Core.Catalog.API/Caching/PrometheusMetricsExporter.cs` (90 lines)
 
 **Dashboard Panels (10 total):**
@@ -388,7 +388,7 @@ Evictions: 1234, Errors: 5, Bytes Written: 45,678,901
 
 **Deployment:**
 ```bash
-kubectl apply -k infrastructure/kubernetes/redis/
+kubectl apply -k infrastructure/prod/k8s/redis/
 ```
 
 ### Dependency 2: Monitoring infrastructure

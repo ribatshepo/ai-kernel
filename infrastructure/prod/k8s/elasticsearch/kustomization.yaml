@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: aikernel-data
+
+resources:
+  - elasticsearch-namespace.yaml
+  - elasticsearch-configmap.yaml
+  - elasticsearch-secret.yaml
+  - elasticsearch-master-statefulset.yaml
+  - elasticsearch-data-statefulset.yaml
+  - elasticsearch-client-deployment.yaml
+  - elasticsearch-pdb.yaml
+  - elasticsearch-networkpolicy.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: elasticsearch
+      app.kubernetes.io/component: search-engine
+      app.kubernetes.io/managed-by: kustomize
+      environment: production
+
+commonAnnotations:
+  documentation: "Elasticsearch cluster for AIKernel search and indexing"

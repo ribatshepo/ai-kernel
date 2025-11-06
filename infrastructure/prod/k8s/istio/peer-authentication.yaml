@@ -1,0 +1,49 @@
+# Strict mTLS for all namespaces
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default-mtls
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT
+---
+# Application namespace mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: aikernel-mtls
+  namespace: aikernel
+spec:
+  mtls:
+    mode: STRICT
+---
+# Infrastructure namespace mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: infrastructure-mtls
+  namespace: aikernel-infrastructure
+spec:
+  mtls:
+    mode: STRICT
+---
+# Data namespace mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: data-mtls
+  namespace: aikernel-data
+spec:
+  mtls:
+    mode: STRICT
+---
+# Monitoring namespace mTLS
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: monitoring-mtls
+  namespace: aikernel-monitoring
+spec:
+  mtls:
+    mode: STRICT

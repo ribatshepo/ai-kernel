@@ -1,0 +1,67 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: elasticsearch
+  namespace: aikernel-data
+  labels:
+    app: elasticsearch
+spec:
+  podSelector:
+    matchLabels:
+      app: elasticsearch
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow from application namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: aikernel
+    ports:
+    - protocol: TCP
+      port: 9200
+  # Allow inter-cluster communication
+  - from:
+    - podSelector:
+        matchLabels:
+          app: elasticsearch
+    ports:
+    - protocol: TCP
+      port: 9300
+    - protocol: TCP
+      port: 9200
+  # Allow from monitoring namespace (Prometheus)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: aikernel-monitoring
+    ports:
+    - protocol: TCP
+      port: 9114  # Exporter metrics
+    - protocol: TCP
+      port: 9200  # Elasticsearch API for monitoring
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow inter-cluster communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: elasticsearch
+    ports:
+    - protocol: TCP
+      port: 9300
+    - protocol: TCP
+      port: 9200
+  # Allow to monitoring (send logs/metrics)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: aikernel-monitoring

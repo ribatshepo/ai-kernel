@@ -1,0 +1,304 @@
+# Default VirtualService with health-based routing for all services
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: default-routing
+  namespace: aikernel
+spec:
+  hosts:
+  - "*.aikernel.svc.cluster.local"
+  http:
+  - match:
+    - uri:
+        prefix: "/"
+    route:
+    - destination:
+        host: "*.aikernel.svc.cluster.local"
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+      retryOn: "5xx,reset,connect-failure,refused-stream,retriable-4xx"
+    timeout: 10s
+    headers:
+      request:
+        add:
+          x-request-id: "%REQ(x-request-id)%"
+          x-correlation-id: "%REQ(x-correlation-id)%"
+---
+# Worker service VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: worker-service
+  namespace: aikernel
+spec:
+  hosts:
+  - worker-service.aikernel.svc.cluster.local
+  http:
+  - name: "worker-api-routes"
+    match:
+    - uri:
+        prefix: "/api/v1/workers"
+    route:
+    - destination:
+        host: worker-service.aikernel.svc.cluster.local
+        port:
+          number: 80
+      weight: 100
+    retries:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: "5xx,reset,connect-failure,refused-stream"
+    timeout: 30s
+    headers:
+      request:
+        add:
+          x-service-type: "worker"
+          x-forwarded-proto: "https"
+---
+# Resource service VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: resource-service
+  namespace: aikernel
+spec:
+  hosts:
+  - resource-service.aikernel.svc.cluster.local
+  http:
+  - name: "resource-api-routes"
+    match:
+    - uri:
+        prefix: "/api/v1/resources"
+    route:
+    - destination:
+        host: resource-service.aikernel.svc.cluster.local
+        port:
+          number: 80
+      weight: 100
+    retries:
+      attempts: 3
+      perTryTimeout: 3s
+      retryOn: "5xx,reset,connect-failure,refused-stream,retriable-4xx"
+    timeout: 15s
+    headers:
+      request:
+        add:
+          x-service-type: "resource"
+---
+# Task service VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: task-service
+  namespace: aikernel
+spec:
+  hosts:
+  - task-service.aikernel.svc.cluster.local
+  http:
+  - name: "task-api-routes"
+    match:
+    - uri:
+        prefix: "/api/v1/tasks"
+    route:
+    - destination:
+        host: task-service.aikernel.svc.cluster.local
+        port:
+          number: 80
+      weight: 100
+    retries:
+      attempts: 3
+      perTryTimeout: 5s
+      retryOn: "5xx,reset,connect-failure,refused-stream"
+    timeout: 60s  # Longer timeout for task operations
+    headers:
+      request:
+        add:
+          x-service-type: "task"
+---
+# Event service VirtualService
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: event-service
+  namespace: aikernel
+spec:
+  hosts:
+  - event-service.aikernel.svc.cluster.local
+  http:
+  - name: "event-api-routes"
+    match:
+    - uri:
+        prefix: "/api/v1/events"
+    route:
+    - destination:
+        host: event-service.aikernel.svc.cluster.local
+        port:
+          number: 80
+      weight: 100
+    retries:
+      attempts: 5
+      perTryTimeout: 2s
+      retryOn: "5xx,reset,connect-failure,refused-stream,retriable-4xx"
+    timeout: 10s
+    headers:
+      request:
+        add:
+          x-service-type: "event"
+---
+# Health check routing policy
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: health-check-routing
+  namespace: aikernel
+spec:
+  hosts:
+  - "*.aikernel.svc.cluster.local"
+  http:
+  - match:
+    - uri:
+        exact: "/health"
+    - uri:
+        exact: "/healthz"
+    - uri:
+        exact: "/ready"
+    - uri:
+        exact: "/readyz"
+    route:
+    - destination:
+        host: "*.aikernel.svc.cluster.local"
+    retries:
+      attempts: 1
+      perTryTimeout: 1s
+    timeout: 3s
+    headers:
+      request:
+        add:
+          x-health-check: "true"
+---
+# API aggregation VirtualService (for unified API access)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-aggregation
+  namespace: aikernel
+spec:
+  hosts:
+  - api.aikernel.io
+  - api-gateway.aikernel.svc.cluster.local
+  gateways:
+  - aikernel-gateway
+  - mesh
+  http:
+  # Catalog routes
+  - match:
+    - uri:
+        prefix: "/api/v1/catalog"
+    route:
+    - destination:
+        host: catalog-api.aikernel.svc.cluster.local
+        port:
+          number: 80
+    retries:
+      attempts: 3
+      perTryTimeout: 2s
+    timeout: 10s
+  # Worker routes
+  - match:
+    - uri:
+        prefix: "/api/v1/workers"
+    route:
+    - destination:
+        host: worker-service.aikernel.svc.cluster.local
+        port:
+          number: 80
+    retries:
+      attempts: 3
+      perTryTimeout: 5s
+    timeout: 30s
+  # Resource routes
+  - match:
+    - uri:
+        prefix: "/api/v1/resources"
+    route:
+    - destination:
+        host: resource-service.aikernel.svc.cluster.local
+        port:
+          number: 80
+    retries:
+      attempts: 3
+      perTryTimeout: 3s
+    timeout: 15s
+  # Task routes
+  - match:
+    - uri:
+        prefix: "/api/v1/tasks"
+    route:
+    - destination:
+        host: task-service.aikernel.svc.cluster.local
+        port:
+          number: 80
+    retries:
+      attempts: 3
+      perTryTimeout: 5s
+    timeout: 60s
+  # Event routes
+  - match:
+    - uri:
+        prefix: "/api/v1/events"
+    route:
+    - destination:
+        host: event-service.aikernel.svc.cluster.local
+        port:
+          number: 80
+    retries:
+      attempts: 5
+      perTryTimeout: 2s
+    timeout: 10s
+  # Default security headers for all responses
+  headers:
+    request:
+      add:
+        x-forwarded-proto: "https"
+      remove:
+      - x-envoy-internal
+    response:
+      add:
+        strict-transport-security: "max-age=31536000; includeSubDomains; preload"
+        x-content-type-options: "nosniff"
+        x-frame-options: "DENY"
+        x-xss-protection: "1; mode=block"
+        referrer-policy: "strict-origin-when-cross-origin"
+        content-security-policy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+---
+# Canary deployment VirtualService (for gradual rollouts)
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: canary-routing
+  namespace: aikernel
+  annotations:
+    canary.istio.io/enabled: "false"
+spec:
+  hosts:
+  - "*.aikernel.svc.cluster.local"
+  http:
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: "*.aikernel.svc.cluster.local"
+        subset: canary
+      weight: 100
+  - route:
+    - destination:
+        host: "*.aikernel.svc.cluster.local"
+        subset: stable
+      weight: 90
+    - destination:
+        host: "*.aikernel.svc.cluster.local"
+        subset: canary
+      weight: 10

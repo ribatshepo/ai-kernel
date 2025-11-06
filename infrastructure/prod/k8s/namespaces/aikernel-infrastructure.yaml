@@ -6,6 +6,7 @@ metadata:
     name: aikernel-infrastructure
     purpose: infrastructure
     environment: production
+    istio-injection: enabled
 ---
 apiVersion: v1
 kind: Namespace
@@ -15,6 +16,7 @@ metadata:
     name: aikernel-monitoring
     purpose: observability
     environment: production
+    istio-injection: enabled
 ---
 apiVersion: v1
 kind: Namespace
@@ -24,6 +26,7 @@ metadata:
     name: aikernel-data
     purpose: data-storage
     environment: production
+    istio-injection: enabled
 ---
 apiVersion: v1
 kind: Namespace
@@ -33,3 +36,4 @@ metadata:
     name: aikernel
     purpose: application
     environment: production
+    istio-injection: enabled

@@ -36,7 +36,7 @@ This document describes the production-grade event bus infrastructure implementa
 
 ### 1. Kafka Cluster Deployment
 
-**Location:** `infrastructure/kubernetes/kafka/`
+**Location:** `infrastructure/prod/k8s/kafka/`
 
 **Key Configuration:**
 - Image: `confluentinc/cp-kafka:7.5.0`
@@ -47,7 +47,7 @@ This document describes the production-grade event bus infrastructure implementa
 
 **Deployment:**
 ```bash
-kubectl apply -k infrastructure/kubernetes/kafka/
+kubectl apply -k infrastructure/prod/k8s/kafka/
 ```
 
 **Verification:**
@@ -83,7 +83,7 @@ var cloudEvent = new CloudEvent<MyEventData>
 
 **Location:**
 - Code: `src/Core/AIKernel.Core.EventBus/SchemaRegistry/`
-- Deployment: `infrastructure/kubernetes/kafka/schema-registry.yaml`
+- Deployment: `infrastructure/prod/k8s/kafka/schema-registry.yaml`
 
 **Features:**
 - Schema registration and versioning

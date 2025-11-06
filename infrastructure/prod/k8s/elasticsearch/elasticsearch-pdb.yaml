@@ -1,0 +1,47 @@
+# Pod Disruption Budget for Elasticsearch master nodes
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elasticsearch-master-pdb
+  namespace: aikernel-data
+  labels:
+    app: elasticsearch
+    component: master
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: elasticsearch
+      component: master
+---
+# Pod Disruption Budget for Elasticsearch data nodes
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elasticsearch-data-pdb
+  namespace: aikernel-data
+  labels:
+    app: elasticsearch
+    component: data
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: elasticsearch
+      component: data
+---
+# Pod Disruption Budget for Elasticsearch client nodes
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: elasticsearch-client-pdb
+  namespace: aikernel-data
+  labels:
+    app: elasticsearch
+    component: client
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: elasticsearch
+      component: client

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-data
+  labels:
+    name: aikernel-data
+    purpose: data-storage
+    environment: production
+    istio-injection: enabled

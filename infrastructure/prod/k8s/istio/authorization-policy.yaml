@@ -1,0 +1,85 @@
+# Default deny all policy for aikernel namespace
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: aikernel
+spec:
+  {}
+---
+# Allow traffic from istio-ingressgateway to aikernel services
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-gateway
+  namespace: aikernel
+spec:
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+---
+# Allow cross-namespace traffic from aikernel to data layer
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-data-access
+  namespace: aikernel-data
+spec:
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["aikernel"]
+    to:
+    - operation:
+        methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+---
+# Allow monitoring scraping from Prometheus
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-prometheus-scraping
+  namespace: aikernel
+spec:
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["aikernel-monitoring"]
+        principals: ["cluster.local/ns/aikernel-monitoring/sa/prometheus"]
+    to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/metrics", "/stats/prometheus"]
+---
+# Allow Jaeger tracing collection
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-jaeger-tracing
+  namespace: aikernel
+spec:
+  action: ALLOW
+  rules:
+  - to:
+    - operation:
+        ports: ["9411", "14268"]
+    from:
+    - source:
+        namespaces: ["aikernel-monitoring"]
+---
+# Allow service mesh control plane access
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-istiod
+  namespace: aikernel
+spec:
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["istio-system"]
+        principals: ["cluster.local/ns/istio-system/sa/istiod"]

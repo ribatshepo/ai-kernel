@@ -1,0 +1,105 @@
+# Certificate lifetime configuration (24-hour rotation)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio-ca-config
+  namespace: istio-system
+data:
+  # Certificate configuration
+  defaultCertTTL: "24h"
+  maxCertTTL: "48h"
+  # Root certificate TTL (10 years)
+  selfSignedCACertTTL: "87600h"
+  # Certificate rotation configuration
+  enableCertRotation: "true"
+  # Grace period before expiration to start rotation
+  certRotationGracePeriod: "12h"
+  # Security configuration
+  enableNamespacesByDefault: "true"
+---
+# Istiod configuration for certificate management
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio
+  namespace: istio-system
+data:
+  mesh: |-
+    # Certificate configuration
+    certificates:
+      - secretName: dns.aikernel
+        dnsNames:
+        - "*.aikernel.svc.cluster.local"
+        - "*.aikernel-infrastructure.svc.cluster.local"
+        - "*.aikernel-data.svc.cluster.local"
+        - "*.aikernel-monitoring.svc.cluster.local"
+
+    # CA configuration
+    caCertificates:
+    - pem: |
+        # Internal CA certificate will be mounted here
+
+    # Certificate TTL
+    defaultConfig:
+      proxyMetadata:
+        CERT_ROTATION_CHECK_INTERVAL: "10m"
+        CERT_GRACE_PERIOD_RATIO: "0.5"
+
+    # Trust domain
+    trustDomain: "cluster.local"
+
+    # Enable certificate rotation
+    enableCertificateRotation: true
+---
+# ServiceAccount for cert-manager integration (if using external CA)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: istio-cert-manager
+  namespace: istio-system
+---
+# ClusterRole for certificate management
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: istio-cert-manager
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["cert-manager.io"]
+  resources: ["certificates", "certificaterequests", "issuers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: istio-cert-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: istio-cert-manager
+subjects:
+- kind: ServiceAccount
+  name: istio-cert-manager
+  namespace: istio-system
+---
+# Certificate for ingress gateway (example - update with actual cert)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aikernel-tls-cert
+  namespace: istio-system
+type: kubernetes.io/tls
+stringData:
+  tls.crt: |
+    # Replace with actual certificate
+    -----BEGIN CERTIFICATE-----
+    # Your certificate here
+    -----END CERTIFICATE-----
+  tls.key: |
+    # Replace with actual private key
+    -----BEGIN PRIVATE KEY-----
+    # Your private key here
+    -----END PRIVATE KEY-----

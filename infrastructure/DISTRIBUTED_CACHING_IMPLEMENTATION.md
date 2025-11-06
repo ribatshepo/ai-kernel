@@ -109,7 +109,7 @@ All tasks from `tasks.md` line 29 "Implement distributed caching infrastructure"
   - Secure cookie configuration
   - GDPR-compliant settings
 
-### 3. Infrastructure Deployment (infrastructure/kubernetes/redis/)
+### 3. Infrastructure Deployment (infrastructure/prod/k8s/redis/)
 
 #### Kubernetes Manifests
 
@@ -398,7 +398,7 @@ app.MapGet("/metrics/cache", async (PrometheusMetricsExporter exporter, HttpCont
 6. Configure application settings
 7. Restart application pods
 
-Detailed instructions in `infrastructure/kubernetes/redis/README.md`.
+Detailed instructions in `infrastructure/prod/k8s/redis/README.md`.
 
 ## Compliance & Governance
 
