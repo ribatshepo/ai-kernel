@@ -50,7 +50,8 @@ jobs:
 
                   # Check required project files exist
                   required_files=(
-                    "AiKernel.sln"
+                    "src/Core/Core.sln"
+                    "src/Catalog/Catalog.sln"
                     "README.md"
                     ".gitignore"
                     ".editorconfig"

@@ -97,11 +97,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      - name: Restore dependencies
-        run: dotnet restore
+      - name: Restore Core dependencies
+        run: |
+          cd src/Core
+          dotnet restore Core.sln
 
-      - name: Build solution
-        run: dotnet build --no-restore --configuration Release
+      - name: Build Core service
+        run: |
+          cd src/Core
+          dotnet build Core.sln --no-restore --configuration Release
+
+      - name: Run Core tests
+        run: |
+          cd src/Core.Tests
+          dotnet test --no-build --configuration Release
 
       - name: Run Core service tests
         run: |
