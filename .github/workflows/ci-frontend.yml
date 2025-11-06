@@ -37,9 +37,31 @@ jobs:
 
           echo "Git Flow validation passed"
 
+  check-frontend-exists:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if frontend exists
+        id: check
+        run: |
+          if [[ -d "src/frontend" ]] && [[ -f "src/frontend/package.json" ]]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Frontend directory and package.json found"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Frontend directory or package.json not found - skipping frontend jobs"
+          fi
+
   frontend-build-test:
-    needs: [validate-git-flow]
-    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    needs: [validate-git-flow, check-frontend-exists]
+    if: |
+      always() &&
+      needs.check-frontend-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -89,8 +111,11 @@ jobs:
           retention-days: 7
 
   frontend-security:
-    needs: [validate-git-flow]
-    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    needs: [validate-git-flow, check-frontend-exists]
+    if: |
+      always() &&
+      needs.check-frontend-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -114,9 +139,12 @@ jobs:
         run: npm outdated || true
 
   frontend-docker:
-    needs: [frontend-build-test]
+    needs: [frontend-build-test, check-frontend-exists]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: |
+      needs.check-frontend-exists.outputs.exists == 'true' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     permissions:
       contents: read
       packages: write

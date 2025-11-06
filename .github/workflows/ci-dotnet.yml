@@ -41,9 +41,31 @@ jobs:
 
           echo "Git Flow validation passed"
 
+  check-dotnet-exists:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if .NET projects exist
+        id: check
+        run: |
+          if find src -name "*.csproj" -o -name "*.sln" | grep -q .; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo ".NET projects found"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No .NET projects found - skipping .NET jobs"
+          fi
+
   dotnet-build-test:
-    needs: [validate-git-flow]
-    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    needs: [validate-git-flow, check-dotnet-exists]
+    if: |
+      always() &&
+      needs.check-dotnet-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
 
     services:
@@ -122,8 +144,11 @@ jobs:
           name: dotnet-coverage
 
   dotnet-security:
-    needs: [validate-git-flow]
-    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    needs: [validate-git-flow, check-dotnet-exists]
+    if: |
+      always() &&
+      needs.check-dotnet-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -157,9 +182,12 @@ jobs:
         uses: github/codeql-action/analyze@v3
 
   dotnet-docker:
-    needs: [dotnet-build-test]
+    needs: [dotnet-build-test, check-dotnet-exists]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: |
+      needs.check-dotnet-exists.outputs.exists == 'true' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     permissions:
       contents: read
       packages: write

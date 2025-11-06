@@ -37,9 +37,31 @@ jobs:
 
           echo "Git Flow validation passed"
 
+  check-python-exists:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if Python intelligence layer exists
+        id: check
+        run: |
+          if [[ -d "src/intelligence" ]] && [[ -f "src/intelligence/requirements.txt" ]]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Python intelligence layer found"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Python intelligence layer not found - skipping Python jobs"
+          fi
+
   python-build-test:
-    needs: [validate-git-flow]
-    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    needs: [validate-git-flow, check-python-exists]
+    if: |
+      always() &&
+      needs.check-python-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -93,8 +115,11 @@ jobs:
           path: src/intelligence/.coverage
 
   python-security:
-    needs: [validate-git-flow]
-    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    needs: [validate-git-flow, check-python-exists]
+    if: |
+      always() &&
+      needs.check-python-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -136,9 +161,12 @@ jobs:
         uses: github/codeql-action/analyze@v3
 
   python-docker:
-    needs: [python-build-test]
+    needs: [python-build-test, check-python-exists]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: |
+      needs.check-python-exists.outputs.exists == 'true' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     permissions:
       contents: read
       packages: write

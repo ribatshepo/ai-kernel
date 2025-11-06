@@ -34,9 +34,31 @@ jobs:
 
           echo "Git Flow validation passed"
 
+  check-inference-exists:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if inference engine exists
+        id: check
+        run: |
+          if [[ -d "src/inference-engine" ]]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Inference engine directory found"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Inference engine directory not found - skipping inference jobs"
+          fi
+
   inference-build-test:
-    needs: [validate-git-flow]
-    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    needs: [validate-git-flow, check-inference-exists]
+    if: |
+      always() &&
+      needs.check-inference-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -112,8 +134,11 @@ jobs:
           retention-days: 7
 
   inference-security:
-    needs: [validate-git-flow]
-    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    needs: [validate-git-flow, check-inference-exists]
+    if: |
+      always() &&
+      needs.check-inference-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -155,9 +180,12 @@ jobs:
         uses: github/codeql-action/analyze@v3
 
   inference-docker:
-    needs: [inference-build-test]
+    needs: [inference-build-test, check-inference-exists]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: |
+      needs.check-inference-exists.outputs.exists == 'true' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     permissions:
       contents: read
       packages: write
