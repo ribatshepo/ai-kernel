@@ -111,14 +111,14 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore src/Core/AIKernel.Core.sln
 
       - name: Build solution
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build src/Core/AIKernel.Core.sln --no-restore --configuration Release
 
       - name: Run unit tests
         run: |
-          dotnet test \
+          dotnet test src/Core/AIKernel.Core.sln \
             --no-build \
             --configuration Release \
             --logger trx \
@@ -165,10 +165,10 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore dependencies
-        run: dotnet restore
+        run: dotnet restore src/Core/AIKernel.Core.sln
 
       - name: Run security audit
-        run: dotnet list package --vulnerable --include-transitive
+        run: dotnet list src/Core/AIKernel.Core.sln package --vulnerable --include-transitive
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -176,7 +176,7 @@ jobs:
           languages: csharp
 
       - name: Build for CodeQL
-        run: dotnet build --no-restore
+        run: dotnet build src/Core/AIKernel.Core.sln --no-restore
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
