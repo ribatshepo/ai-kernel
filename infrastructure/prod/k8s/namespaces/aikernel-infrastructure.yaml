@@ -24,3 +24,12 @@ metadata:
     name: aikernel-data
     purpose: data-storage
     environment: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel
+  labels:
+    name: aikernel
+    purpose: application
+    environment: production

@@ -1,0 +1,135 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kafka-metrics
+  namespace: aikernel-kafka
+  labels:
+    app: kafka
+    component: messaging
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app: kafka
+  namespaceSelector:
+    matchNames:
+    - aikernel-kafka
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    scheme: http
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kafka-alerts
+  namespace: aikernel-kafka
+  labels:
+    app: kafka
+    component: messaging
+    prometheus: kube-prometheus
+spec:
+  groups:
+  - name: kafka.rules
+    interval: 30s
+    rules:
+    - alert: KafkaBrokerDown
+      expr: up{job="kafka-metrics"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        component: messaging
+      annotations:
+        summary: "Kafka broker is down"
+        description: "Kafka broker {{ $labels.pod }} in namespace {{ $labels.namespace }} has been down for more than 5 minutes."
+
+    - alert: KafkaUnderReplicatedPartitions
+      expr: kafka_server_replicamanager_underreplicatedpartitions > 0
+      for: 10m
+      labels:
+        severity: warning
+        component: messaging
+      annotations:
+        summary: "Kafka has under-replicated partitions"
+        description: "Kafka broker {{ $labels.pod }} has {{ $value }} under-replicated partitions for more than 10 minutes."
+
+    - alert: KafkaOfflinePartitions
+      expr: kafka_controller_kafkacontroller_offlinepartitionscount > 0
+      for: 5m
+      labels:
+        severity: critical
+        component: messaging
+      annotations:
+        summary: "Kafka has offline partitions"
+        description: "Kafka controller has {{ $value }} offline partitions for more than 5 minutes."
+
+    - alert: KafkaHighProducerLatency
+      expr: kafka_network_requestmetrics_totaltimems{request="Produce",quantile="0.99"} > 1000
+      for: 10m
+      labels:
+        severity: warning
+        component: messaging
+      annotations:
+        summary: "Kafka producer latency is high"
+        description: "Kafka broker {{ $labels.pod }} has producer p99 latency of {{ $value }}ms for more than 10 minutes (threshold: 1000ms)."
+
+    - alert: KafkaHighConsumerLag
+      expr: kafka_consumergroup_lag > 100000
+      for: 15m
+      labels:
+        severity: warning
+        component: messaging
+      annotations:
+        summary: "Kafka consumer group has high lag"
+        description: "Consumer group {{ $labels.consumergroup }} for topic {{ $labels.topic }} has lag of {{ $value }} messages."
+
+    - alert: KafkaHighDiskUsage
+      expr: (1 - (kafka_log_logmanager_logdirectoryoffline / kafka_log_logmanager_logdirectorytotal)) < 0.2
+      for: 10m
+      labels:
+        severity: warning
+        component: messaging
+      annotations:
+        summary: "Kafka broker disk usage is high"
+        description: "Kafka broker {{ $labels.pod }} has less than 20% disk space remaining."
+
+    - alert: KafkaNoActiveController
+      expr: sum(kafka_controller_kafkacontroller_activecontrollercount) != 1
+      for: 5m
+      labels:
+        severity: critical
+        component: messaging
+      annotations:
+        summary: "Kafka cluster has no active controller"
+        description: "Kafka cluster has {{ $value }} active controllers (should be exactly 1)."
+
+    - alert: KafkaISRShrinkRate
+      expr: rate(kafka_server_replicamanager_isrshrinkspersec[5m]) > 0.1
+      for: 10m
+      labels:
+        severity: warning
+        component: messaging
+      annotations:
+        summary: "Kafka ISR shrink rate is high"
+        description: "Kafka broker {{ $labels.pod }} has ISR shrink rate of {{ $value }}/sec for more than 10 minutes."
+
+    - alert: KafkaNetworkProcessorIdlePercent
+      expr: kafka_network_processor_idlepercent < 0.3
+      for: 10m
+      labels:
+        severity: warning
+        component: messaging
+      annotations:
+        summary: "Kafka network processor idle percentage is low"
+        description: "Kafka broker {{ $labels.pod }} network processor is only {{ $value }}% idle (threshold: 30%)."
+
+    - alert: ZooKeeperDown
+      expr: up{job="zookeeper-metrics"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        component: messaging
+      annotations:
+        summary: "ZooKeeper instance is down"
+        description: "ZooKeeper instance {{ $labels.pod }} in namespace {{ $labels.namespace }} has been down for more than 5 minutes."

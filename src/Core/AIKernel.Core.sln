@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AIKernel.Core.Catalog", "AI
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AIKernel.Core.Catalog.API", "AIKernel.Core.Catalog.API\AIKernel.Core.Catalog.API.csproj", "{BFF819DB-C6CF-4833-83A5-47784292755D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AIKernel.Core.EventBus", "AIKernel.Core.EventBus\AIKernel.Core.EventBus.csproj", "{BAF6FFD4-CD89-4F3E-BD76-3C3A32887A8F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +32,9 @@ Global
 		{BFF819DB-C6CF-4833-83A5-47784292755D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BFF819DB-C6CF-4833-83A5-47784292755D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BFF819DB-C6CF-4833-83A5-47784292755D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BAF6FFD4-CD89-4F3E-BD76-3C3A32887A8F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BAF6FFD4-CD89-4F3E-BD76-3C3A32887A8F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BAF6FFD4-CD89-4F3E-BD76-3C3A32887A8F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BAF6FFD4-CD89-4F3E-BD76-3C3A32887A8F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

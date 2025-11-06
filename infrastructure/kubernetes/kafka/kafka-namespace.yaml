@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-kafka
+  labels:
+    name: aikernel-kafka
+    component: messaging
+    part-of: aikernel

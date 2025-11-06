@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: aikernel-kafka
+
+resources:
+- kafka-namespace.yaml
+- zookeeper-statefulset.yaml
+- kafka-statefulset.yaml
+- kafka-configmap.yaml
+- kafka-pdb.yaml
+- schema-registry.yaml
+- kafka-monitoring.yaml
+
+commonLabels:
+  part-of: aikernel
+  managed-by: kustomize
