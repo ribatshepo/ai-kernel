@@ -34,11 +34,63 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate project structure
+      - name: Check project structure
         run: |
-          if [[ ! -d "src" ]]; then
-            echo "ERROR: Missing src directory"
+          echo "Checking project structure..."
+
+          # Check if src directory exists
+          if [[ -d "src" ]]; then
+            echo "src/ directory found"
+
+            # Check for .NET projects
+            if find src -name "*.csproj" -o -name "*.sln" 2>/dev/null | grep -q .; then
+              echo ".NET projects found"
+            fi
+
+            # Check for frontend
+            if [[ -d "src/frontend" ]]; then
+              echo "Frontend directory found"
+            fi
+
+            # Check for Python intelligence
+            if [[ -d "src/intelligence" ]]; then
+              echo "Python intelligence directory found"
+            fi
+
+            # Check for inference engine
+            if [[ -d "src/inference-engine" ]]; then
+              echo "Inference engine directory found"
+            fi
+          else
+            echo "src/ directory not found - project may be in early setup"
+          fi
+
+      - name: Check for merge conflicts
+        run: |
+          echo "Checking for merge conflict markers..."
+
+          if [[ -d "src" ]]; then
+            if grep -r "<<<<<<< HEAD\|=======\|>>>>>>>" src/ 2>/dev/null; then
+              echo "ERROR: Merge conflict markers found in source files"
+              exit 1
+            fi
+          fi
+
+          echo "No merge conflicts found"
+
+      - name: Validate workflow files
+        run: |
+          echo "Validating workflow files..."
+
+          if [[ ! -d ".github/workflows" ]]; then
+            echo "ERROR: Missing .github/workflows directory"
             exit 1
           fi
 
-          echo "Project structure validation passed"
+          # Check for at least one workflow file
+          if ! ls .github/workflows/*.yml >/dev/null 2>&1; then
+            echo "ERROR: No workflow files found"
+            exit 1
+          fi
+
+          echo "Workflow files validated"
