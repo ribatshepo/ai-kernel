@@ -1,0 +1,233 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j-core
+  namespace: aikernel-data
+  labels:
+    app: neo4j
+    component: graph-database
+    role: core
+spec:
+  ports:
+  - port: 7474
+    name: http
+    targetPort: 7474
+  - port: 7473
+    name: https
+    targetPort: 7473
+  - port: 7687
+    name: bolt
+    targetPort: 7687
+  clusterIP: None
+  selector:
+    app: neo4j
+    role: core
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j
+  namespace: aikernel-data
+  labels:
+    app: neo4j
+    component: graph-database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 7474
+    name: http
+    targetPort: 7474
+  - port: 7473
+    name: https
+    targetPort: 7473
+  - port: 7687
+    name: bolt
+    targetPort: 7687
+  selector:
+    app: neo4j
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: neo4j-core
+  namespace: aikernel-data
+  labels:
+    app: neo4j
+    component: graph-database
+    role: core
+spec:
+  serviceName: neo4j-core
+  replicas: 3
+  selector:
+    matchLabels:
+      app: neo4j
+      role: core
+  template:
+    metadata:
+      labels:
+        app: neo4j
+        component: graph-database
+        role: core
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "2004"
+        prometheus.io/path: "/metrics"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - neo4j
+              - key: role
+                operator: In
+                values:
+                - core
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: neo4j
+        image: neo4j:5.15-enterprise
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 7474
+          name: http
+        - containerPort: 7473
+          name: https
+        - containerPort: 7687
+          name: bolt
+        - containerPort: 5000
+          name: discovery
+        - containerPort: 6000
+          name: tx
+        - containerPort: 7000
+          name: raft
+        - containerPort: 2004
+          name: metrics
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NEO4J_dbms_mode
+          value: "CORE"
+        - name: NEO4J_causal__clustering_discovery__advertised__address
+          value: "$(POD_NAME).neo4j-core.$(POD_NAMESPACE).svc.cluster.local:5000"
+        - name: NEO4J_causal__clustering_transaction__advertised__address
+          value: "$(POD_NAME).neo4j-core.$(POD_NAMESPACE).svc.cluster.local:6000"
+        - name: NEO4J_causal__clustering_raft__advertised__address
+          value: "$(POD_NAME).neo4j-core.$(POD_NAMESPACE).svc.cluster.local:7000"
+        - name: NEO4J_dbms_connector_bolt_advertised__address
+          value: "$(POD_NAME).neo4j-core.$(POD_NAMESPACE).svc.cluster.local:7687"
+        - name: NEO4J_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: neo4j-auth
+              key: auth
+        envFrom:
+        - configMapRef:
+            name: neo4j-config
+        resources:
+          requests:
+            memory: "6Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: logs
+          mountPath: /logs
+        - name: plugins
+          mountPath: /plugins
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 7474
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7474
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 7474
+          runAsGroup: 7474
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+      initContainers:
+      - name: init-plugins
+        image: neo4j:5.15-enterprise
+        imagePullPolicy: IfNotPresent
+        command:
+        - sh
+        - -c
+        - |
+          echo "Installing APOC and GDS plugins..."
+          wget -O /plugins/apoc.jar https://github.com/neo4j-contrib/neo4j-apoc-procedures/releases/download/5.15.0/apoc-5.15.0-core.jar
+          wget -O /plugins/gds.jar https://graphdatascience.ninja/neo4j-graph-data-science-2.5.3.jar
+          chmod 644 /plugins/*.jar
+          echo "Plugins installed successfully"
+        volumeMounts:
+        - name: plugins
+          mountPath: /plugins
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 7474
+          runAsGroup: 7474
+      securityContext:
+        fsGroup: 7474
+        fsGroupChangePolicy: "OnRootMismatch"
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 200Gi
+  - metadata:
+      name: logs
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 10Gi
+  - metadata:
+      name: plugins
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: fast-ssd
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: neo4j-auth
+  namespace: aikernel-data
+  labels:
+    app: neo4j
+    component: graph-database
+type: Opaque
+stringData:
+  auth: "neo4j/change-this-password-in-production"
