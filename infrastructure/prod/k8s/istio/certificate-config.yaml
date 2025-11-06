@@ -85,21 +85,32 @@ subjects:
   name: istio-cert-manager
   namespace: istio-system
 ---
-# Certificate for ingress gateway (example - update with actual cert)
+# TLS certificate for ingress gateway
+# Create this secret separately using:
+# kubectl create secret tls aikernel-tls-cert \
+#   --cert=path/to/tls.crt \
+#   --key=path/to/tls.key \
+#   --namespace=istio-system
+#
+# Or use cert-manager to automatically provision certificates:
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: aikernel-tls-cert
+#   namespace: istio-system
+# spec:
+#   secretName: aikernel-tls-cert
+#   issuerRef:
+#     name: letsencrypt-prod
+#     kind: ClusterIssuer
+#   dnsNames:
+#   - "*.aikernel.io"
+#   - "api.aikernel.io"
 apiVersion: v1
 kind: Secret
 metadata:
   name: aikernel-tls-cert
   namespace: istio-system
+  annotations:
+    description: "TLS certificate for ingress gateway"
 type: kubernetes.io/tls
-stringData:
-  tls.crt: |
-    # Replace with actual certificate
-    -----BEGIN CERTIFICATE-----
-    # Your certificate here
-    -----END CERTIFICATE-----
-  tls.key: |
-    # Replace with actual private key
-    -----BEGIN PRIVATE KEY-----
-    # Your private key here
-    -----END PRIVATE KEY-----

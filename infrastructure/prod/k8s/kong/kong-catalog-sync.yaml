@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kong-catalog-sync-config
+  namespace: kong
+  labels:
+    app: kong-catalog-sync
+data:
+  config.yaml: |
+    kong:
+      adminUrl: "http://kong-admin.kong.svc.cluster.local:8001"
+      timeout: 30
+
+    catalog:
+      baseUrl: "http://catalog-api.aikernel.svc.cluster.local:8080"
+      timeout: 30
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kong-catalog-sync
+  namespace: kong
+  labels:
+    app: kong-catalog-sync
+    component: sync
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Only one instance should sync at a time
+  selector:
+    matchLabels:
+      app: kong-catalog-sync
+  template:
+    metadata:
+      labels:
+        app: kong-catalog-sync
+        component: sync
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: kong
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: sync
+          image: ghcr.io/aikernel/kong-catalog-sync:v1.0.0
+          imagePullPolicy: IfNotPresent
+
+          args:
+            - --config=/etc/kong-sync/config.yaml
+            - --sync-interval=30s
+            - --metrics-addr=:8080
+            - --health-addr=:8081
+
+          env:
+            - name: KONG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kong-admin-credentials
+                  key: api-key
+                  optional: true
+            - name: CATALOG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-api-credentials
+                  key: api-key
+
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+          volumeMounts:
+            - name: config
+              mountPath: /etc/kong-sync
+              readOnly: true
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+
+      volumes:
+        - name: config
+          configMap:
+            name: kong-catalog-sync-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kong-catalog-sync
+  namespace: kong
+  labels:
+    app: kong-catalog-sync
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+spec:
+  type: ClusterIP
+  selector:
+    app: kong-catalog-sync
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+---
+apiVersion: v1
+kind: ServiceMonitor
+metadata:
+  name: kong-catalog-sync
+  namespace: kong
+  labels:
+    app: kong-catalog-sync
+    prometheus: kube-prometheus
+spec:
+  selector:
+    matchLabels:
+      app: kong-catalog-sync
+  endpoints:
+    - port: metrics
+      interval: 15s
+      scrapeTimeout: 10s

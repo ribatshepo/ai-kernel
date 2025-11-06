@@ -1,0 +1,198 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+  labels:
+    app: alertmanager
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+      slack_api_url_file: /etc/alertmanager/secrets/slack_webhook_url
+      pagerduty_url: https://events.pagerduty.com/v2/enqueue
+
+    # Templates for notifications
+    templates:
+      - /etc/alertmanager/templates/*.tmpl
+
+    # Route tree for alerts
+    route:
+      group_by: ['alertname', 'cluster', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 12h
+      receiver: 'default'
+
+      routes:
+        # Critical alerts to PagerDuty
+        - match:
+            severity: critical
+          receiver: pagerduty-critical
+          continue: true
+          group_wait: 0s
+          repeat_interval: 5m
+
+        # Critical alerts also to Slack
+        - match:
+            severity: critical
+          receiver: slack-critical
+          group_wait: 0s
+          repeat_interval: 5m
+
+        # Warning alerts to Slack
+        - match:
+            severity: warning
+          receiver: slack-warnings
+          group_wait: 30s
+          repeat_interval: 4h
+
+        # Info alerts to Slack
+        - match:
+            severity: info
+          receiver: slack-info
+          group_wait: 5m
+          repeat_interval: 24h
+
+        # Infrastructure alerts
+        - match:
+            component: kubernetes
+          receiver: slack-infrastructure
+          group_wait: 30s
+          repeat_interval: 2h
+
+        # Application alerts
+        - match:
+            component: application
+          receiver: slack-application
+          group_wait: 30s
+          repeat_interval: 4h
+
+    # Inhibition rules
+    inhibit_rules:
+      # Inhibit warning if critical is firing for same alertname
+      - source_match:
+          severity: critical
+        target_match:
+          severity: warning
+        equal: ['alertname', 'cluster', 'service']
+
+      # Inhibit info if warning is firing
+      - source_match:
+          severity: warning
+        target_match:
+          severity: info
+        equal: ['alertname', 'cluster', 'service']
+
+      # Inhibit pod alerts if node is down
+      - source_match:
+          alertname: NodeNotReady
+        target_match_re:
+          alertname: (PodCrashLooping|PodNotReady|HighMemoryUsage|HighCPUUsage)
+        equal: ['node']
+
+    # Receivers configuration
+    receivers:
+      # Default receiver
+      - name: 'default'
+        slack_configs:
+          - channel: '#alerts-default'
+            username: 'Prometheus'
+            icon_emoji: ':prometheus:'
+            title: 'Alert: {{ .GroupLabels.alertname }}'
+            text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+      # PagerDuty for critical alerts
+      - name: 'pagerduty-critical'
+        pagerduty_configs:
+          - service_key_file: /etc/alertmanager/secrets/pagerduty_service_key
+            description: '{{ .GroupLabels.alertname }}: {{ .GroupLabels.service }}'
+            details:
+              cluster: '{{ .GroupLabels.cluster }}'
+              namespace: '{{ .GroupLabels.namespace }}'
+              severity: '{{ .GroupLabels.severity }}'
+
+      # Slack for critical alerts
+      - name: 'slack-critical'
+        slack_configs:
+          - channel: '#alerts-critical'
+            username: 'Prometheus'
+            icon_emoji: ':rotating_light:'
+            color: 'danger'
+            title: 'CRITICAL: {{ .GroupLabels.alertname }}'
+            text: |
+              {{ range .Alerts }}
+              *Alert:* {{ .Labels.alertname }}
+              *Severity:* {{ .Labels.severity }}
+              *Service:* {{ .Labels.service }}
+              *Namespace:* {{ .Labels.namespace }}
+              *Description:* {{ .Annotations.description }}
+              *Summary:* {{ .Annotations.summary }}
+              {{ end }}
+
+      # Slack for warnings
+      - name: 'slack-warnings'
+        slack_configs:
+          - channel: '#alerts-warnings'
+            username: 'Prometheus'
+            icon_emoji: ':warning:'
+            color: 'warning'
+            title: 'WARNING: {{ .GroupLabels.alertname }}'
+            text: |
+              {{ range .Alerts }}
+              *Alert:* {{ .Labels.alertname }}
+              *Service:* {{ .Labels.service }}
+              *Description:* {{ .Annotations.description }}
+              {{ end }}
+
+      # Slack for info
+      - name: 'slack-info'
+        slack_configs:
+          - channel: '#alerts-info'
+            username: 'Prometheus'
+            icon_emoji: ':information_source:'
+            color: 'good'
+            title: 'INFO: {{ .GroupLabels.alertname }}'
+            text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+
+      # Slack for infrastructure
+      - name: 'slack-infrastructure'
+        slack_configs:
+          - channel: '#alerts-infrastructure'
+            username: 'Prometheus'
+            icon_emoji: ':construction:'
+            color: 'warning'
+            title: 'Infrastructure: {{ .GroupLabels.alertname }}'
+            text: |
+              {{ range .Alerts }}
+              *Node:* {{ .Labels.node }}{{ .Labels.instance }}
+              *Description:* {{ .Annotations.description }}
+              {{ end }}
+
+      # Slack for application
+      - name: 'slack-application'
+        slack_configs:
+          - channel: '#alerts-application'
+            username: 'Prometheus'
+            icon_emoji: ':package:'
+            title: 'Application: {{ .GroupLabels.alertname }}'
+            text: |
+              {{ range .Alerts }}
+              *Service:* {{ .Labels.service }}
+              *Namespace:* {{ .Labels.namespace }}
+              *Description:* {{ .Annotations.description }}
+              {{ end }}
+
+  notification-templates.tmpl: |
+    {{ define "slack.default.title" }}
+    [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.SortedPairs.Values | join " " }}
+    {{ end }}
+
+    {{ define "slack.default.text" }}
+    {{ range .Alerts }}
+    *Alert:* {{ .Labels.alertname }}
+    *Severity:* {{ .Labels.severity }}
+    *Summary:* {{ .Annotations.summary }}
+    *Description:* {{ .Annotations.description }}
+    {{ end }}
+    {{ end }}

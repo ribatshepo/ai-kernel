@@ -17,6 +17,8 @@ resources:
   - observability-jaeger.yaml
   - observability-grafana.yaml
   - monitoring-dashboards.yaml
+  - catalog-mesh-crd.yaml
+  - catalog-mesh-controller.yaml
 
 labels:
   - pairs:

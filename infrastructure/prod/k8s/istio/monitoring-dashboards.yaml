@@ -530,7 +530,6 @@ data:
   alertmanager.yml: |
     global:
       resolve_timeout: 5m
-      slack_api_url: '<slack-webhook-url>'  # Configure with actual webhook
 
     route:
       group_by: ['alertname', 'cluster', 'service']
@@ -549,24 +548,19 @@ data:
 
     receivers:
     - name: 'default'
-      slack_configs:
-      - channel: '#aikernel-alerts'
-        title: 'AIKernel Alert'
-        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+      webhook_configs:
+      - url: 'http://alertmanager-webhook-receiver:8080/alerts'
+        send_resolved: true
 
     - name: 'critical'
-      slack_configs:
-      - channel: '#aikernel-critical'
-        title: 'CRITICAL: {{ .GroupLabels.alertname }}'
-        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
-      pagerduty_configs:
-      - service_key: '<pagerduty-service-key>'  # Configure with actual key
+      webhook_configs:
+      - url: 'http://alertmanager-webhook-receiver:8080/critical'
+        send_resolved: true
 
     - name: 'warning'
-      slack_configs:
-      - channel: '#aikernel-warnings'
-        title: 'Warning: {{ .GroupLabels.alertname }}'
-        text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+      webhook_configs:
+      - url: 'http://alertmanager-webhook-receiver:8080/warning'
+        send_resolved: true
 
     inhibit_rules:
     - source_match:

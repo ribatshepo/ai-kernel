@@ -1,0 +1,62 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kong
+
+resources:
+  - kong-namespace.yaml
+  - kong-rbac.yaml
+  - kong-config.yaml
+  - kong-deployment.yaml
+  - kong-service.yaml
+  - kong-certificate.yaml
+  - kong-pdb.yaml
+  - kong-plugins.yaml
+  - kong-monitoring.yaml
+  - kong-catalog-sync.yaml
+
+configMapGenerator:
+  - name: kong-config
+    behavior: merge
+    literals:
+      - KONG_LOG_LEVEL=info
+
+secretGenerator:
+  - name: kong-postgres-credentials
+    literals:
+      - password=CHANGE_ME  # Override in overlay
+  - name: catalog-api-credentials
+    literals:
+      - api-key=CHANGE_ME  # Override in overlay
+
+images:
+  - name: kong
+    newTag: "3.4-alpine"
+  - name: ghcr.io/aikernel/kong-catalog-sync
+    newTag: "v1.0.0"
+
+replicas:
+  - name: kong-gateway
+    count: 3
+  - name: kong-catalog-sync
+    count: 1
+
+commonLabels:
+  app.kubernetes.io/part-of: aikernel
+  app.kubernetes.io/managed-by: kustomize
+
+patches:
+  # Patch for production environment
+  - target:
+      kind: Deployment
+      name: kong-gateway
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 5
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "1000m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "4000m"

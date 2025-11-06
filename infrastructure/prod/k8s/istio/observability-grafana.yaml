@@ -96,8 +96,8 @@ data:
         esVersion: "8.0.0"
         logMessageField: message
         logLevelField: level
-      secureJsonData:
-        basicAuthPassword: changeme
+        basicAuth: true
+        basicAuthUser: grafana
 
   dashboards.yaml: |
     apiVersion: 1
@@ -212,15 +212,20 @@ data:
       }
     }
 ---
+# Grafana credentials secret
+# Create this secret separately using:
+# kubectl create secret generic grafana-credentials \
+#   --from-literal=admin-password=<secure-password> \
+#   --from-literal=db-password=<db-password> \
+#   --namespace=aikernel-monitoring
 apiVersion: v1
 kind: Secret
 metadata:
   name: grafana-credentials
   namespace: aikernel-monitoring
+  annotations:
+    description: "Grafana admin and database credentials"
 type: Opaque
-stringData:
-  admin-password: "changeme"  # Replace with strong password
-  db-password: "changeme"  # Replace with actual password
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -280,6 +285,16 @@ spec:
               key: db-password
         - name: GF_INSTALL_PLUGINS
           value: "grafana-piechart-panel"
+        - name: GF_DATABASE_TYPE
+          value: postgres
+        - name: GF_DATABASE_HOST
+          value: postgres.aikernel-data.svc.cluster.local:5432
+        - name: GF_DATABASE_NAME
+          value: grafana
+        - name: GF_DATABASE_USER
+          value: grafana
+        - name: GF_DATABASE_SSL_MODE
+          value: require
         resources:
           requests:
             cpu: 200m

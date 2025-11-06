@@ -305,16 +305,20 @@ spec:
     app: jaeger
     component: query
 ---
-# Elasticsearch credentials secret (placeholder)
+# Elasticsearch credentials secret
+# Create this secret separately using:
+# kubectl create secret generic elasticsearch-credentials \
+#   --from-literal=username=jaeger \
+#   --from-literal=password=<secure-password> \
+#   --namespace=aikernel-monitoring
 apiVersion: v1
 kind: Secret
 metadata:
   name: elasticsearch-credentials
   namespace: aikernel-monitoring
+  annotations:
+    description: "Elasticsearch credentials for Jaeger"
 type: Opaque
-stringData:
-  username: "jaeger"
-  password: "changeme"  # Replace with actual password
 ---
 # HPA for Jaeger Collector
 apiVersion: autoscaling/v2
