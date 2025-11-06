@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: istio-system
-  labels:
-    name: istio-system
-    component: service-mesh
-    part-of: aikernel
-    topology.istio.io/network: default

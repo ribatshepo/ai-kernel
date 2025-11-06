@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: aikernel-data
-  labels:
-    name: aikernel-data
-    component: data-layer
-    part-of: aikernel
