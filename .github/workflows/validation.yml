@@ -1,0 +1,44 @@
+name: Validation
+
+on:
+  push:
+    branches: [main, develop, feat/*, fix/*]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  branch-validation:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate Git Flow rules
+        run: |
+          SOURCE="${{ github.head_ref }}"
+          TARGET="${{ github.base_ref }}"
+
+          if [[ "$TARGET" == "main" && "$SOURCE" != "develop" ]]; then
+            echo "ERROR: Only develop can merge to main"
+            exit 1
+          fi
+
+          if [[ "$TARGET" == "develop" && ! "$SOURCE" =~ ^(feat|fix)/ ]]; then
+            echo "ERROR: Only feat/* and fix/* can merge to develop"
+            exit 1
+          fi
+
+          echo "Git Flow validation passed"
+
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate project structure
+        run: |
+          if [[ ! -d "src" ]]; then
+            echo "ERROR: Missing src directory"
+            exit 1
+          fi
+
+          echo "Project structure validation passed"
