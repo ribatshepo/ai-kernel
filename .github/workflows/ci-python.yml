@@ -1,0 +1,208 @@
+name: CI - Python/DSPy Intelligence Layer
+
+on:
+  push:
+    branches: [main, develop, feat/*, fix/*]
+    paths:
+      - 'src/intelligence/**'
+      - '.github/workflows/ci-python.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/intelligence/**'
+      - '.github/workflows/ci-python.yml'
+
+env:
+  PYTHON_VERSION: 3.11.x
+
+jobs:
+  validate-git-flow:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate Git Flow rules
+        run: |
+          SOURCE="${{ github.head_ref }}"
+          TARGET="${{ github.base_ref }}"
+
+          if [[ "$TARGET" == "main" && "$SOURCE" != "develop" ]]; then
+            echo "ERROR: Only develop can merge to main"
+            exit 1
+          fi
+
+          if [[ "$TARGET" == "develop" && ! "$SOURCE" =~ ^(feat|fix)/ ]]; then
+            echo "ERROR: Only feat/* and fix/* can merge to develop"
+            exit 1
+          fi
+
+          echo "Git Flow validation passed"
+
+  check-python-exists:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if Python intelligence layer exists
+        id: check
+        run: |
+          if [[ -d "src/intelligence" ]] && [[ -f "src/intelligence/requirements.txt" ]]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Python intelligence layer found"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Python intelligence layer not found - skipping Python jobs"
+          fi
+
+  python-build-test:
+    needs: [validate-git-flow, check-python-exists]
+    if: |
+      always() &&
+      needs.check-python-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/intelligence
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: src/intelligence/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Lint with ruff
+        run: ruff check .
+        continue-on-error: true
+
+      - name: Format check with black
+        run: black --check .
+        continue-on-error: true
+
+      - name: Type check with mypy
+        run: mypy .
+        continue-on-error: true
+
+      - name: Run tests with pytest
+        run: pytest --cov=. --cov-report=xml --cov-report=term --verbose
+
+      - name: Upload test coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          directory: src/intelligence
+          flags: python
+          name: python-coverage
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-test-results
+          path: src/intelligence/.coverage
+
+  python-security:
+    needs: [validate-git-flow, check-python-exists]
+    if: |
+      always() &&
+      needs.check-python-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    defaults:
+      run:
+        working-directory: src/intelligence
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install safety bandit
+
+      - name: Run safety check
+        run: safety check --json
+        continue-on-error: true
+
+      - name: Run bandit security scan
+        run: bandit -r . -f json -o bandit-report.json
+        continue-on-error: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  python-docker:
+    needs: [python-build-test, check-python-exists]
+    runs-on: ubuntu-latest
+    if: |
+      needs.check-python-exists.outputs.exists == 'true' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-intelligence
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/intelligence
+          file: ./src/intelligence/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64

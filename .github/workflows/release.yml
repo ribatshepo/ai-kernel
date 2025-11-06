@@ -8,25 +8,18 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  DOTNET_VERSION: 8.0.x
+  NODE_VERSION: 20.x
+  PYTHON_VERSION: 3.11.x
 
 jobs:
-  release:
+  # Extract version once
+  prepare:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v3
-        with:
-          dotnet-version: 8.0.x
-
       - name: Extract version from tag
         id: version
         run: |
@@ -34,23 +27,103 @@ jobs:
           VERSION=${TAG#v}
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
 
-      - name: Build release artifacts
+  # Build all release artifacts
+  build-artifacts:
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build .NET services
         run: |
           dotnet restore
           dotnet build --configuration Release --no-restore
-          
-          # Create release packages
+
+          # Publish orchestration core
           dotnet publish src/Core/AiKernel.Core.csproj \
             --configuration Release \
-            --output ./artifacts/aikernel-core \
-            --self-contained false \
-            --verbosity normal
-          
-          # Create archives
+            --output ./artifacts/orchestration-core \
+            --self-contained false
+
+          # Publish catalog service
+          dotnet publish src/Catalog/AiKernel.Catalog.csproj \
+            --configuration Release \
+            --output ./artifacts/unified-catalog \
+            --self-contained false
+
+          # Publish secrets service
+          dotnet publish src/Secrets/AiKernel.Secrets.csproj \
+            --configuration Release \
+            --output ./artifacts/secrets-management \
+            --self-contained false
+
+      - name: Build frontend
+        run: |
+          cd src/frontend
+          npm ci
+          npm run build
+          cp -r .next/ ../../artifacts/frontend/
+
+      - name: Create release archives
+        run: |
           cd artifacts
-          tar -czf aikernel-core-${{ steps.version.outputs.version }}-linux-x64.tar.gz aikernel-core/
-          cd ..
+          tar -czf orchestration-core-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz orchestration-core/
+          tar -czf unified-catalog-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz unified-catalog/
+          tar -czf secrets-management-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz secrets-management/
+          tar -czf frontend-${{ needs.prepare.outputs.version }}.tar.gz frontend/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts/*.tar.gz
+
+  # Build and push Docker images for all services
+  build-images:
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service:
+          - name: frontend
+            context: ./src/frontend
+            dockerfile: ./src/frontend/Dockerfile
+          - name: orchestration-core
+            context: ./src/Core
+            dockerfile: ./src/Core/Dockerfile
+          - name: proxy-layer
+            context: ./src/Proxy
+            dockerfile: ./src/Proxy/Dockerfile
+          - name: secrets-management
+            context: ./src/Secrets
+            dockerfile: ./src/Secrets/Dockerfile
+          - name: unified-catalog
+            context: ./src/Catalog
+            dockerfile: ./src/Catalog/Dockerfile
+          - name: inference-engine
+            context: ./src/inference-engine
+            dockerfile: ./src/inference-engine/Dockerfile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -65,30 +138,48 @@ jobs:
       - name: Build and push release image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service.name }}:${{ needs.prepare.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service.name }}:latest
           labels: |
-            org.opencontainers.image.title=AiKernel
-            org.opencontainers.image.description=AI-Powered Identity and Secrets Management Kernel
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.title=AiKernel-${{ matrix.service.name }}
+            org.opencontainers.image.description=AI-Powered Identity and Secrets Management Kernel - ${{ matrix.service.name }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+
+  # Create GitHub release
+  release:
+    needs: [prepare, build-artifacts, build-images]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts/
 
       - name: Generate changelog
         id: changelog
         run: |
-          # Simple changelog generation
           if git describe --tags --abbrev=0 HEAD~1 >/dev/null 2>&1; then
             PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD~1)
             CHANGELOG=$(git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD)
           else
             CHANGELOG=$(git log --pretty=format:"- %s (%h)")
           fi
-          
+
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -96,19 +187,33 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          name: Release ${{ steps.version.outputs.tag }}
+          name: Release ${{ needs.prepare.outputs.tag }}
           body: |
+            ## AI-Powered Identity and Secrets Management Kernel
+
+            Release ${{ needs.prepare.outputs.version }} of the AI Kernel platform.
+
             ## Changes
             ${{ steps.changelog.outputs.changelog }}
-            
+
             ## Docker Images
-            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}`
-            - `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest`
-            
-            ## Artifacts
-            - aikernel-core-${{ steps.version.outputs.version }}-linux-x64.tar.gz
+            All images are available at `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-<service>:${{ needs.prepare.outputs.version }}`
+
+            Services:
+            - `frontend` - Next.js Presentation Layer
+            - `orchestration-core` - .NET Orchestration Kernel
+            - `proxy-layer` - Service Mesh Proxy Layer
+            - `secrets-management` - Secrets Management Service
+            - `unified-catalog` - Unified Catalog Service
+            - `inference-engine` - Assembly-Optimized Inference Engine
+
+            ## Binary Artifacts
+            - orchestration-core-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz
+            - unified-catalog-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz
+            - secrets-management-${{ needs.prepare.outputs.version }}-linux-x64.tar.gz
+            - frontend-${{ needs.prepare.outputs.version }}.tar.gz
           files: |
             artifacts/*.tar.gz
           draft: false
-          prerelease: ${{ contains(steps.version.outputs.tag, '-') }}
+          prerelease: ${{ contains(needs.prepare.outputs.tag, '-') }}
           generate_release_notes: true
