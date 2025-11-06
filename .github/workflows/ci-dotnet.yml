@@ -1,60 +1,29 @@
-name: .NET Services CI/CD
+name: CI - .NET Services
 
 on:
   push:
-    branches: [main, develop]
-    paths: ['src/Core/**', 'src/Proxy/**', 'src/Secrets/**', 'src/Catalog/**']
+    branches: [main, develop, feat/*, fix/*]
+    paths:
+      - 'src/**/*.cs'
+      - 'src/**/*.csproj'
+      - 'src/**/*.sln'
+      - '.github/workflows/ci-dotnet.yml'
   pull_request:
     branches: [main, develop]
-    paths: ['src/Core/**', 'src/Proxy/**', 'src/Secrets/**', 'src/Catalog/**']
+    paths:
+      - 'src/**/*.cs'
+      - 'src/**/*.csproj'
+      - 'src/**/*.sln'
+      - '.github/workflows/ci-dotnet.yml'
+  workflow_call:
 
 env:
   DOTNET_VERSION: 8.0.x
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Branch validation for .NET services
-  dotnet-branch-validation:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Validate Git Flow branch rules for .NET services
-        run: |
-          echo "Validating Git Flow branch rules for .NET services..."
-          
-          SOURCE_BRANCH="${{ github.head_ref }}"
-          TARGET_BRANCH="${{ github.base_ref }}"
-          
-          echo "Source branch: $SOURCE_BRANCH"
-          echo "Target branch: $TARGET_BRANCH"
-          
-          # Rule 1: Only develop can merge to main
-          if [[ "$TARGET_BRANCH" == "main" ]]; then
-            if [[ "$SOURCE_BRANCH" != "develop" ]]; then
-              echo "ERROR: Only 'develop' branch can merge to 'main'. Current source: $SOURCE_BRANCH"
-              exit 1
-            fi
-            echo "SUCCESS: develop -> main merge is allowed"
-          fi
-          
-          # Rule 2: Only feat/* and fix/* can merge to develop
-          if [[ "$TARGET_BRANCH" == "develop" ]]; then
-            if [[ ! "$SOURCE_BRANCH" =~ ^(feat|fix)/ ]]; then
-              echo "ERROR: Only 'feat/*' and 'fix/*' branches can merge to 'develop'. Current source: $SOURCE_BRANCH"
-              exit 1
-            fi
-            echo "SUCCESS: $SOURCE_BRANCH -> develop merge is allowed"
-          fi
-          
-          echo "SUCCESS: Git Flow branch validation passed for .NET services"
-
-  # .NET services build and test
   dotnet-build-test:
-    needs: [dotnet-branch-validation]
     runs-on: ubuntu-latest
-    if: always() && (needs.dotnet-branch-validation.result == 'success' || needs.dotnet-branch-validation.result == 'skipped')
-    
+
     services:
       postgres:
         image: postgres:15-alpine
@@ -69,7 +38,7 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-      
+
       redis:
         image: redis:7-alpine
         options: >-
@@ -97,29 +66,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-      - name: Restore Core dependencies
-        run: |
-          cd src/Core
-          dotnet restore Core.sln
+      - name: Restore dependencies
+        run: dotnet restore
 
-      - name: Build Core service
-        run: |
-          cd src/Core
-          dotnet build Core.sln --no-restore --configuration Release
+      - name: Build solution
+        run: dotnet build --no-restore --configuration Release
 
-      - name: Run Core tests
+      - name: Run unit tests
         run: |
-          cd src/Core.Tests
-          dotnet test --no-build --configuration Release
-
-      - name: Run Core service tests
-        run: |
-          dotnet test src/Core/ \
+          dotnet test \
             --no-build \
             --configuration Release \
             --logger trx \
             --collect:"XPlat Code Coverage" \
-            --results-directory TestResults/Core/
+            --results-directory TestResults/
         env:
           ConnectionStrings__PostgreSQL: "Host=localhost;Database=aikernel_test;Username=test_user;Password=test_password"
           ConnectionStrings__Redis: "localhost:6379"
@@ -131,11 +91,16 @@ jobs:
           name: dotnet-test-results
           path: TestResults/
 
-  # .NET services security scanning
+      - name: Upload test coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          directory: TestResults/
+          flags: dotnet
+          name: dotnet-coverage
+
   dotnet-security:
-    needs: [dotnet-branch-validation]
     runs-on: ubuntu-latest
-    if: always() && (needs.dotnet-branch-validation.result == 'success' || needs.dotnet-branch-validation.result == 'skipped')
     permissions:
       actions: read
       contents: read
@@ -167,9 +132,8 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
-  # Build Docker images for .NET services
-  dotnet-docker-build:
-    needs: [dotnet-build-test, dotnet-security]
+  dotnet-docker:
+    needs: [dotnet-build-test]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     permissions:
@@ -178,36 +142,52 @@ jobs:
 
     strategy:
       matrix:
-        service: [Core, Proxy, Secrets, Catalog]
+        service:
+          - name: orchestration-core
+            context: ./src/Core
+            dockerfile: ./src/Core/Dockerfile
+          - name: proxy-layer
+            context: ./src/Proxy
+            dockerfile: ./src/Proxy/Dockerfile
+          - name: secrets-management
+            context: ./src/Secrets
+            dockerfile: ./src/Secrets/Dockerfile
+          - name: unified-catalog
+            context: ./src/Catalog
+            dockerfile: ./src/Catalog/Dockerfile
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}
+          images: ghcr.io/${{ github.repository }}-${{ matrix.service.name }}
           tags: |
             type=ref,event=branch
             type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
-          context: ./src/${{ matrix.service }}
-          file: ./src/${{ matrix.service }}/Dockerfile
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          platforms: linux/amd64
