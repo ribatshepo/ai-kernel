@@ -11,13 +11,35 @@ on:
     paths:
       - 'src/frontend/**'
       - '.github/workflows/ci-frontend.yml'
-  workflow_call:
 
 env:
   NODE_VERSION: 20.x
 
 jobs:
+  validate-git-flow:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate Git Flow rules
+        run: |
+          SOURCE="${{ github.head_ref }}"
+          TARGET="${{ github.base_ref }}"
+
+          if [[ "$TARGET" == "main" && "$SOURCE" != "develop" ]]; then
+            echo "ERROR: Only develop can merge to main"
+            exit 1
+          fi
+
+          if [[ "$TARGET" == "develop" && ! "$SOURCE" =~ ^(feat|fix)/ ]]; then
+            echo "ERROR: Only feat/* and fix/* can merge to develop"
+            exit 1
+          fi
+
+          echo "Git Flow validation passed"
+
   frontend-build-test:
+    needs: [validate-git-flow]
+    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -67,6 +89,8 @@ jobs:
           retention-days: 7
 
   frontend-security:
+    needs: [validate-git-flow]
+    if: always() && (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
     runs-on: ubuntu-latest
     defaults:
       run:
