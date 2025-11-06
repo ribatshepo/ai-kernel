@@ -1,0 +1,308 @@
+services:
+  # PostgreSQL Cluster (Primary + Replica)
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: aikernel-postgres-primary
+    environment:
+      POSTGRES_USER: aikernel
+      POSTGRES_PASSWORD: aikernel_dev_password
+      POSTGRES_DB: aikernel_catalog
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-primary-data:/var/lib/postgresql/data
+      - ../config/postgres/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ../config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+    ports:
+      - "5432:5432"
+    networks:
+      - aikernel-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aikernel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: aikernel-postgres-replica
+    environment:
+      POSTGRES_USER: aikernel
+      POSTGRES_PASSWORD: aikernel_dev_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - aikernel-network
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aikernel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Neo4j Cluster
+  neo4j:
+    image: neo4j:5-enterprise
+    container_name: aikernel-neo4j
+    environment:
+      NEO4J_AUTH: neo4j/aikernel_dev_password
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 2G
+      NEO4J_server_memory_pagecache_size: 1G
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_security_procedures_allowlist: apoc.*
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-plugins:/plugins
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    networks:
+      - aikernel-network
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p aikernel_dev_password 'RETURN 1'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Elasticsearch Cluster
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    container_name: aikernel-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - cluster.name=aikernel-search
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx1g"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - aikernel-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Kibana
+  kibana:
+    image: kibana:8.11.0
+    container_name: aikernel-kibana
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      SERVER_NAME: aikernel-kibana
+    ports:
+      - "5601:5601"
+    networks:
+      - aikernel-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # Redis Cluster (simplified for dev)
+  redis-master:
+    image: redis:7-alpine
+    container_name: aikernel-redis-master
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-master-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - aikernel-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-replica:
+    image: redis:7-alpine
+    container_name: aikernel-redis-replica
+    command: redis-server --appendonly yes --replicaof redis-master 6379
+    volumes:
+      - redis-replica-data:/data
+    ports:
+      - "6380:6379"
+    networks:
+      - aikernel-network
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: aikernel-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_4LW_COMMANDS_WHITELIST: srvr,mntr,ruok
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    ports:
+      - "2181:2181"
+    networks:
+      - aikernel-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: aikernel-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    networks:
+      - aikernel-network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # HashiCorp Vault
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: aikernel-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: aikernel-dev-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "8200:8200"
+    networks:
+      - aikernel-network
+    healthcheck:
+      test: ["CMD-SHELL", "vault status || exit 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: aikernel-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ../config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - aikernel-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: aikernel-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: aikernel_dev_password
+      GF_SERVER_ROOT_URL: http://localhost:3000
+      GF_INSTALL_PLUGINS: redis-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../config/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - aikernel-network
+    depends_on:
+      - prometheus
+
+  # Jaeger
+  jaeger:
+    image: jaegertracing/all-in-one:1.50
+    container_name: aikernel-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: memory
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "14269:14269"
+      - "14250:14250"
+      - "4317:4317"
+      - "4318:4318"
+    networks:
+      - aikernel-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+networks:
+  aikernel-network:
+    driver: bridge
+    name: aikernel-network
+
+volumes:
+  postgres-primary-data:
+  postgres-replica-data:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-plugins:
+  elasticsearch-data:
+  redis-master-data:
+  redis-replica-data:
+  zookeeper-data:
+  zookeeper-logs:
+  kafka-data:
+  prometheus-data:
+  grafana-data:

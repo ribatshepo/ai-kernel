@@ -284,3 +284,8 @@ appsettings.Local.json
 
 # JetBrains dotCover
 *.dcvr
+
+# Migration files
+migrations
+migrations-archive
+Migrations
