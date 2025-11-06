@@ -1,0 +1,6 @@
+@AIKernel.Core.Catalog.API_HostAddress = http://localhost:5113
+
+GET {{AIKernel.Core.Catalog.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
