@@ -1,0 +1,245 @@
+name: CI - .NET Services
+
+on:
+  push:
+    branches: [main, develop, feat/*, fix/*]
+    paths:
+      - 'src/**/*.cs'
+      - 'src/**/*.csproj'
+      - 'src/**/*.sln'
+      - '.github/workflows/ci-dotnet.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/**/*.cs'
+      - 'src/**/*.csproj'
+      - 'src/**/*.sln'
+      - '.github/workflows/ci-dotnet.yml'
+
+env:
+  DOTNET_VERSION: 8.0.x
+
+jobs:
+  validate-git-flow:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Validate Git Flow rules
+        run: |
+          SOURCE="${{ github.head_ref }}"
+          TARGET="${{ github.base_ref }}"
+
+          if [[ "$TARGET" == "main" && "$SOURCE" != "develop" ]]; then
+            echo "ERROR: Only develop can merge to main"
+            exit 1
+          fi
+
+          if [[ "$TARGET" == "develop" && ! "$SOURCE" =~ ^(feat|fix)/ ]]; then
+            echo "ERROR: Only feat/* and fix/* can merge to develop"
+            exit 1
+          fi
+
+          echo "Git Flow validation passed"
+
+  check-dotnet-exists:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if .NET projects exist
+        id: check
+        run: |
+          if find src -name "*.csproj" -o -name "*.sln" | grep -q .; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo ".NET projects found"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No .NET projects found - skipping .NET jobs"
+          fi
+
+  dotnet-build-test:
+    needs: [validate-git-flow, check-dotnet-exists]
+    if: |
+      always() &&
+      needs.check-dotnet-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: aikernel_test
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('src/**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build solution
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run unit tests
+        run: |
+          dotnet test \
+            --no-build \
+            --configuration Release \
+            --logger trx \
+            --collect:"XPlat Code Coverage" \
+            --results-directory TestResults/
+        env:
+          ConnectionStrings__PostgreSQL: "Host=localhost;Database=aikernel_test;Username=test_user;Password=test_password"
+          ConnectionStrings__Redis: "localhost:6379"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dotnet-test-results
+          path: TestResults/
+
+      - name: Upload test coverage
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          directory: TestResults/
+          flags: dotnet
+          name: dotnet-coverage
+
+  dotnet-security:
+    needs: [validate-git-flow, check-dotnet-exists]
+    if: |
+      always() &&
+      needs.check-dotnet-exists.outputs.exists == 'true' &&
+      (needs.validate-git-flow.result == 'success' || needs.validate-git-flow.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Run security audit
+        run: dotnet list package --vulnerable --include-transitive
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+
+      - name: Build for CodeQL
+        run: dotnet build --no-restore
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  dotnet-docker:
+    needs: [dotnet-build-test, check-dotnet-exists]
+    runs-on: ubuntu-latest
+    if: |
+      needs.check-dotnet-exists.outputs.exists == 'true' &&
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service:
+          - name: orchestration-core
+            context: ./src/Core
+            dockerfile: ./src/Core/Dockerfile
+          - name: proxy-layer
+            context: ./src/Proxy
+            dockerfile: ./src/Proxy/Dockerfile
+          - name: secrets-management
+            context: ./src/Secrets
+            dockerfile: ./src/Secrets/Dockerfile
+          - name: unified-catalog
+            context: ./src/Catalog
+            dockerfile: ./src/Catalog/Dockerfile
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}-${{ matrix.service.name }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
