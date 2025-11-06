@@ -1,0 +1,255 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-headless
+  namespace: aikernel
+  labels:
+    app: redis
+    component: cache
+spec:
+  clusterIP: None
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+    - name: sentinel
+      port: 26379
+      targetPort: 26379
+      protocol: TCP
+  selector:
+    app: redis
+    component: cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: aikernel
+  labels:
+    app: redis
+    component: cache
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9121"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+      protocol: TCP
+    - name: metrics
+      port: 9121
+      targetPort: 9121
+      protocol: TCP
+  selector:
+    app: redis
+    component: cache
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: aikernel
+  labels:
+    app: redis
+    component: cache
+spec:
+  serviceName: redis-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis
+      component: cache
+  template:
+    metadata:
+      labels:
+        app: redis
+        component: cache
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - redis
+              topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: config
+          image: redis:7.2-alpine
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              REDIS_PASSWORD=$(cat /etc/redis-password/password)
+              if [ "$(hostname)" = "redis-0" ]; then
+                echo "Starting as master"
+                sed "s/\${REDIS_PASSWORD}/$REDIS_PASSWORD/g" /mnt/config/redis.conf > /etc/redis/redis.conf
+              else
+                echo "Starting as replica of redis-0"
+                sed "s/\${REDIS_PASSWORD}/$REDIS_PASSWORD/g" /mnt/config/redis.conf > /etc/redis/redis.conf
+                echo "replicaof redis-0.redis-headless.aikernel.svc.cluster.local 6379" >> /etc/redis/redis.conf
+                echo "masterauth $REDIS_PASSWORD" >> /etc/redis/redis.conf
+              fi
+              sed "s/\${REDIS_PASSWORD}/$REDIS_PASSWORD/g" /mnt/config/sentinel.conf > /etc/redis/sentinel.conf
+          volumeMounts:
+            - name: config
+              mountPath: /mnt/config
+              readOnly: true
+            - name: redis-config
+              mountPath: /etc/redis
+            - name: redis-password
+              mountPath: /etc/redis-password
+              readOnly: true
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          command:
+            - redis-server
+            - /etc/redis/redis.conf
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          env:
+            - name: REDIS_REPLICATION_MODE
+              value: master
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  redis-cli -a $(cat /etc/redis-password/password) ping | grep -q PONG
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+            - name: redis-config
+              mountPath: /etc/redis
+            - name: redis-password
+              mountPath: /etc/redis-password
+              readOnly: true
+        - name: sentinel
+          image: redis:7.2-alpine
+          command:
+            - redis-sentinel
+            - /etc/redis/sentinel.conf
+          ports:
+            - name: sentinel
+              containerPort: 26379
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: sentinel
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: sentinel
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: redis-config
+              mountPath: /etc/redis
+            - name: redis-password
+              mountPath: /etc/redis-password
+              readOnly: true
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.55.0-alpine
+          ports:
+            - name: metrics
+              containerPort: 9121
+              protocol: TCP
+          env:
+            - name: REDIS_ADDR
+              value: redis://localhost:6379
+            - name: REDIS_PASSWORD_FILE
+              value: /etc/redis-password/password
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: redis-password
+              mountPath: /etc/redis-password
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: redis-config
+        - name: redis-config
+          emptyDir: {}
+        - name: redis-password
+          secret:
+            secretName: redis-password
+            defaultMode: 0400
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          app: redis
+          component: cache
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 10Gi
