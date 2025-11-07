@@ -1,0 +1,101 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: aikernel-data
+  labels:
+    app: postgres
+    app.kubernetes.io/part-of: ai-kernel
+data:
+  postgresql.conf: |
+    # Connection Settings
+    max_connections = 200
+    superuser_reserved_connections = 3
+
+    # Memory Settings
+    shared_buffers = 512MB
+    effective_cache_size = 2GB
+    maintenance_work_mem = 128MB
+    work_mem = 16MB
+
+    # WAL Settings
+    wal_level = replica
+    max_wal_senders = 10
+    max_replication_slots = 10
+    wal_keep_size = 1GB
+
+    # Checkpoint Settings
+    checkpoint_completion_target = 0.9
+    checkpoint_timeout = 10min
+
+    # Query Tuning
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_rotation_age = 1d
+    log_rotation_size = 100MB
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_checkpoints = on
+    log_connections = on
+    log_disconnections = on
+    log_duration = off
+    log_lock_waits = on
+    log_statement = 'ddl'
+    log_temp_files = 0
+
+    # Performance Monitoring
+    shared_preload_libraries = 'pg_stat_statements'
+    pg_stat_statements.track = all
+
+  init-catalog.sql: |
+    -- Initialize catalog database schema
+
+    -- Enable required extensions
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
+    CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+
+    -- Create schemas
+    CREATE SCHEMA IF NOT EXISTS catalog;
+    CREATE SCHEMA IF NOT EXISTS identity;
+    CREATE SCHEMA IF NOT EXISTS secrets;
+    CREATE SCHEMA IF NOT EXISTS audit;
+
+    -- Grant permissions
+    GRANT USAGE ON SCHEMA catalog TO aikernel;
+    GRANT USAGE ON SCHEMA identity TO aikernel;
+    GRANT USAGE ON SCHEMA secrets TO aikernel;
+    GRANT USAGE ON SCHEMA audit TO aikernel;
+
+    -- Set search path
+    ALTER DATABASE aikernel_catalog SET search_path TO catalog, identity, secrets, audit, public;
+
+    -- Create audit log table (immutable)
+    CREATE TABLE IF NOT EXISTS audit.event_log (
+      id BIGSERIAL PRIMARY KEY,
+      event_id UUID NOT NULL DEFAULT uuid_generate_v4(),
+      timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      event_type VARCHAR(100) NOT NULL,
+      actor_id VARCHAR(255),
+      resource_type VARCHAR(100),
+      resource_id VARCHAR(255),
+      action VARCHAR(50) NOT NULL,
+      status VARCHAR(20) NOT NULL,
+      metadata JSONB,
+      client_ip INET,
+      user_agent TEXT,
+      trace_id VARCHAR(255),
+      span_id VARCHAR(255)
+    );
+
+    CREATE INDEX idx_audit_timestamp ON audit.event_log(timestamp DESC);
+    CREATE INDEX idx_audit_actor ON audit.event_log(actor_id);
+    CREATE INDEX idx_audit_resource ON audit.event_log(resource_type, resource_id);
+    CREATE INDEX idx_audit_trace ON audit.event_log(trace_id);
+    CREATE INDEX idx_audit_metadata ON audit.event_log USING gin(metadata);

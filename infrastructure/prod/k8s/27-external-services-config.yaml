@@ -1,0 +1,296 @@
+---
+# External Services Configuration for AI Kernel Platform
+# This file configures integration with bare-metal Harbor, Artifactory, and MinIO
+
+# Harbor External Service (Bare-Metal)
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-external
+  namespace: aikernel-core
+  labels:
+    app: harbor
+    type: external
+spec:
+  type: ExternalName
+  externalName: ${HARBOR_REGISTRY}  # Injected from .env
+  ports:
+  - port: 443
+    targetPort: 443
+    protocol: TCP
+    name: https
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+
+---
+# Harbor Registry Credentials Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-registry-credentials
+  namespace: aikernel-core
+type: kubernetes.io/dockerconfigjson
+data:
+  # Update with your Harbor credentials
+  # Generate with: kubectl create secret docker-registry harbor-registry-credentials \
+  #   --docker-server=harbor.aikernel.local \
+  #   --docker-username=admin \
+  #   --docker-password=<password> \
+  #   --dry-run=client -o yaml | grep .dockerconfigjson
+  .dockerconfigjson: e30K  # Placeholder - update this
+
+---
+# Artifactory External Service (Bare-Metal)
+apiVersion: v1
+kind: Service
+metadata:
+  name: artifactory-external
+  namespace: aikernel-core
+  labels:
+    app: artifactory
+    type: external
+spec:
+  type: ExternalName
+  externalName: ${ARTIFACTORY_URL#https://}  # Injected from .env (strip https://)
+  ports:
+  - port: 443
+    targetPort: 443
+    protocol: TCP
+    name: https
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+
+---
+# MinIO S3 External Service (Bare-Metal)
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio-external
+  namespace: aikernel-core
+  labels:
+    app: minio
+    type: external
+spec:
+  type: ExternalName
+  externalName: ${MINIO_ENDPOINT%:*}  # Injected from .env (strip port)
+  ports:
+  - port: 9000
+    targetPort: 9000
+    protocol: TCP
+    name: api
+  - port: 9001
+    targetPort: 9001
+    protocol: TCP
+    name: console
+
+---
+# MinIO S3 Credentials Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: aikernel-core
+type: Opaque
+stringData:
+  MINIO_ENDPOINT: "${MINIO_ENDPOINT}"  # Injected from .env
+  MINIO_ACCESS_KEY: "${MINIO_ACCESS_KEY}"
+  MINIO_SECRET_KEY: "${MINIO_SECRET_KEY}"
+  MINIO_USE_SSL: "${MINIO_USE_SSL}"
+  MINIO_BUCKET: "${MINIO_BUCKET}"
+
+---
+# Artifactory Credentials Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: artifactory-credentials
+  namespace: aikernel-core
+type: Opaque
+stringData:
+  ARTIFACTORY_URL: "${ARTIFACTORY_URL}"  # Injected from .env
+  ARTIFACTORY_USERNAME: "${ARTIFACTORY_USERNAME}"
+  ARTIFACTORY_PASSWORD: "${ARTIFACTORY_PASSWORD}"
+
+---
+# ConfigMap for External Services Endpoints
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: external-services
+  namespace: aikernel-core
+  labels:
+    app: aikernel
+data:
+  # Harbor Configuration - Injected from .env
+  HARBOR_URL: "${HARBOR_URL}"
+  HARBOR_REGISTRY: "${HARBOR_REGISTRY}"
+  HARBOR_PROJECT: "${HARBOR_PROJECT}"
+
+  # Artifactory Configuration - Injected from .env
+  ARTIFACTORY_URL: "${ARTIFACTORY_URL}"
+  ARTIFACTORY_HELM_REPO: "${ARTIFACTORY_HELM_REPO}"
+  ARTIFACTORY_NUGET_REPO: "${ARTIFACTORY_NUGET_REPO}"
+  ARTIFACTORY_DOCKER_REPO: "${ARTIFACTORY_DOCKER_REPO}"
+  ARTIFACTORY_GENERIC_REPO: "${ARTIFACTORY_GENERIC_REPO}"
+
+  # MinIO S3 Configuration - Injected from .env
+  MINIO_ENDPOINT: "${MINIO_ENDPOINT}"
+  MINIO_BUCKET: "${MINIO_BUCKET}"
+  MINIO_REGION: "${MINIO_REGION}"
+
+---
+# EndpointSlice for Harbor (if using IP address instead of DNS)
+# Uncomment and update if Harbor is accessed via IP
+# apiVersion: discovery.k8s.io/v1
+# kind: EndpointSlice
+# metadata:
+#   name: harbor-external
+#   namespace: aikernel-core
+#   labels:
+#     kubernetes.io/service-name: harbor-external
+# addressType: IPv4
+# ports:
+# - name: https
+#   port: 443
+#   protocol: TCP
+# - name: http
+#   port: 80
+#   protocol: TCP
+# endpoints:
+# - addresses:
+#   - "192.168.1.10"  # Replace with your Harbor server IP
+
+---
+# EndpointSlice for Artifactory (if using IP address instead of DNS)
+# Uncomment and update if Artifactory is accessed via IP
+# apiVersion: discovery.k8s.io/v1
+# kind: EndpointSlice
+# metadata:
+#   name: artifactory-external
+#   namespace: aikernel-core
+#   labels:
+#     kubernetes.io/service-name: artifactory-external
+# addressType: IPv4
+# ports:
+# - name: https
+#   port: 443
+#   protocol: TCP
+# - name: http
+#   port: 80
+#   protocol: TCP
+# endpoints:
+# - addresses:
+#   - "192.168.1.11"  # Replace with your Artifactory server IP
+
+---
+# EndpointSlice for MinIO (if using IP address instead of DNS)
+# Uncomment and update if MinIO is accessed via IP
+# apiVersion: discovery.k8s.io/v1
+# kind: EndpointSlice
+# metadata:
+#   name: minio-external
+#   namespace: aikernel-core
+#   labels:
+#     kubernetes.io/service-name: minio-external
+# addressType: IPv4
+# ports:
+# - name: api
+#   port: 9000
+#   protocol: TCP
+# - name: console
+#   port: 9001
+#   protocol: TCP
+# endpoints:
+# - addresses:
+#   - "192.168.1.12"  # Replace with your MinIO server IP
+
+---
+# NetworkPolicy to allow egress to external services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-external-services
+  namespace: aikernel-core
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow Harbor access
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  # Allow Artifactory access
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  # Allow MinIO access
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 9000
+    - protocol: TCP
+      port: 9001
+
+---
+# ServiceAccount for accessing external services
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-services-sa
+  namespace: aikernel-core
+  labels:
+    app: aikernel
+
+---
+# Role for external services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: external-services-role
+  namespace: aikernel-core
+spec:
+  rules:
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+
+---
+# RoleBinding for external services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: external-services-rolebinding
+  namespace: aikernel-core
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: external-services-role
+subjects:
+- kind: ServiceAccount
+  name: external-services-sa
+  namespace: aikernel-core

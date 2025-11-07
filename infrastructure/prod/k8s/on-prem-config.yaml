@@ -1,0 +1,221 @@
+---
+# On-Premise Kubernetes Configuration
+# This file contains on-prem specific configurations
+
+# MetalLB Configuration for LoadBalancer support
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metallb-config
+  namespace: metallb-system
+data:
+  config: |
+    address-pools:
+    - name: default
+      protocol: layer2
+      addresses:
+      - 192.168.1.240-192.168.1.250  # Update with your IP range
+---
+# Storage Class for on-prem storage (example: NFS)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-storage
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: nfs.csi.k8s.io  # Or your NFS provisioner
+parameters:
+  server: nfs-server.example.com  # Update with your NFS server
+  share: /k8s-volumes
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+mountOptions:
+  - hard
+  - nfsvers=4.1
+---
+# Alternative: Local Path Provisioner Storage Class
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-path
+provisioner: rancher.io/local-path
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+---
+# Ingress Controller for on-prem (NGINX)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-nginx
+---
+# Ingress Class
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: nginx
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: k8s.io/ingress-nginx
+---
+# Sample Ingress for Grafana
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: aikernel-monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - grafana.aikernel.local  # Update with your domain
+      secretName: grafana-tls
+  rules:
+    - host: grafana.aikernel.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+---
+# Sample Ingress for Kubernetes Dashboard
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dashboard-ingress
+  namespace: kubernetes-dashboard
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - dashboard.aikernel.local
+      secretName: dashboard-tls
+  rules:
+    - host: dashboard.aikernel.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kubernetes-dashboard
+                port:
+                  number: 443
+---
+# Sample Ingress for Prometheus
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prometheus-ingress
+  namespace: aikernel-monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: prometheus-basic-auth
+    nginx.ingress.kubernetes.io/auth-realm: "Authentication Required"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - prometheus.aikernel.local
+      secretName: prometheus-tls
+  rules:
+    - host: prometheus.aikernel.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
+---
+# NodePort Service alternative for on-prem (if not using MetalLB)
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-nodeport
+  namespace: aikernel-monitoring
+  labels:
+    app: grafana
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  type: NodePort
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+      nodePort: 30300  # Accessible on <node-ip>:30300
+      name: http
+---
+# Dashboard NodePort Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard-nodeport
+  namespace: kubernetes-dashboard
+  labels:
+    k8s-app: kubernetes-dashboard
+spec:
+  type: NodePort
+  selector:
+    k8s-app: kubernetes-dashboard
+  ports:
+    - port: 443
+      targetPort: 8443
+      nodePort: 30443  # Accessible on https://<node-ip>:30443
+      name: https
+---
+# Prometheus NodePort Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-nodeport
+  namespace: aikernel-monitoring
+  labels:
+    app: prometheus
+spec:
+  type: NodePort
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+      nodePort: 30900  # Accessible on <node-ip>:30900
+      name: http
+---
+# ArgoCD NodePort Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-server-nodeport
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-server
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: argocd-server
+  ports:
+    - port: 80
+      targetPort: 8080
+      nodePort: 30800
+      name: http
+    - port: 443
+      targetPort: 8080
+      nodePort: 30843
+      name: https

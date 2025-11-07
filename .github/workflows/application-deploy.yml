@@ -1,0 +1,334 @@
+name: Application Deployment
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'src/**'
+      - 'Dockerfile*'
+      - '.github/workflows/application-deploy.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      service:
+        description: 'Service to deploy (or "all")'
+        required: true
+        type: string
+        default: 'all'
+
+env:
+  # Use on-premise Harbor registry instead of GitHub Container Registry
+  REGISTRY: harbor.aikernel.local
+  IMAGE_NAME: aikernel
+
+jobs:
+  build:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service:
+          - orchestration-kernel
+          - intelligence-service
+          - frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Harbor Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./src/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            VERSION=${{ github.sha }}
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Sign image with Cosign
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          # Install cosign
+          curl -LO https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+          chmod +x cosign-linux-amd64
+          sudo mv cosign-linux-amd64 /usr/local/bin/cosign
+
+          # Sign the image
+          echo "$COSIGN_PRIVATE_KEY" > cosign.key
+          cosign sign --key cosign.key \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}:${{ github.sha }}
+          rm cosign.key
+
+  upload-artifacts:
+    name: Upload Build Artifacts to Artifactory
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: https://artifactory.aikernel.local
+          JF_USER: ${{ secrets.ARTIFACTORY_USERNAME }}
+          JF_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD }}
+
+      - name: Upload build metadata to Artifactory
+        run: |
+          # Create build info
+          jfrog rt build-collect-env
+
+          # Upload build metadata
+          jfrog rt build-add-git
+
+          # Publish build info
+          jfrog rt build-publish --build-name=ai-kernel --build-number=${{ github.run_number }}
+
+      - name: Create and upload build artifacts
+        run: |
+          # Create artifact metadata file
+          cat > build-metadata.json <<EOF
+          {
+            "build_number": "${{ github.run_number }}",
+            "commit_sha": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "images": {
+              "orchestration-kernel": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/orchestration-kernel:${{ github.sha }}",
+              "intelligence-service": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/intelligence-service:${{ github.sha }}",
+              "frontend": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.sha }}"
+            },
+            "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
+
+          # Upload to Artifactory
+          jfrog rt upload build-metadata.json \
+            generic-local/ai-kernel/builds/${{ github.run_number }}/build-metadata.json \
+            --build-name=ai-kernel \
+            --build-number=${{ github.run_number }}
+
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: [build, upload-artifacts]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development')
+    environment:
+      name: development
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: v1.28.0
+
+      - name: Configure kubectl
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_DEV }}
+        run: |
+          mkdir -p $HOME/.kube
+          echo "$KUBECONFIG_DATA" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Update image tags
+        run: |
+          # Update deployment manifests with new image tags
+          IMAGE_TAG="${{ github.sha }}"
+
+          # For each service, update the image tag
+          for service in orchestration-kernel intelligence-service frontend; do
+            if [ -f "src/$service/k8s/deployment.yaml" ]; then
+              sed -i "s|image:.*$service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/$service:develop-${IMAGE_TAG:0:7}|g" \
+                src/$service/k8s/deployment.yaml
+            fi
+          done
+
+      - name: Deploy applications
+        run: |
+          # Apply Kubernetes manifests
+          kubectl apply -f src/orchestration-kernel/k8s/ || echo "Orchestration kernel not ready"
+          kubectl apply -f src/intelligence-service/k8s/ || echo "Intelligence service not ready"
+          kubectl apply -f src/frontend/k8s/ || echo "Frontend not ready"
+
+      - name: Wait for deployment
+        run: |
+          # Wait for deployments to be ready (when they exist)
+          kubectl rollout status deployment/orchestration-kernel -n aikernel-core --timeout=5m || true
+          kubectl rollout status deployment/intelligence-service -n aikernel-ai --timeout=5m || true
+          kubectl rollout status deployment/frontend -n aikernel-core --timeout=5m || true
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build, upload-artifacts, deploy-dev]
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: v1.28.0
+
+      - name: Configure kubectl
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_STAGING }}
+        run: |
+          mkdir -p $HOME/.kube
+          echo "$KUBECONFIG_DATA" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Deploy via ArgoCD
+        env:
+          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+        run: |
+          # Install ArgoCD CLI
+          curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv argocd /usr/local/bin/
+
+          # Login to ArgoCD
+          argocd login $ARGOCD_SERVER --auth-token $ARGOCD_TOKEN --insecure
+
+          # Sync applications
+          argocd app sync aikernel-core --prune
+          argocd app sync aikernel-ai --prune
+          argocd app sync aikernel-frontend --prune
+
+      - name: Wait and verify
+        run: |
+          # Wait for ArgoCD sync to complete
+          sleep 30
+          kubectl get pods -n aikernel-core
+          kubectl get pods -n aikernel-ai
+
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, upload-artifacts, deploy-staging]
+    if: |
+      github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    environment:
+      name: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: v1.28.0
+
+      - name: Configure kubectl
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_PROD }}
+        run: |
+          mkdir -p $HOME/.kube
+          echo "$KUBECONFIG_DATA" | base64 -d > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Canary deployment
+        run: |
+          # Deploy canary version (10% traffic)
+          kubectl set image deployment/orchestration-kernel \
+            orchestration-kernel=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/orchestration-kernel:${{ github.sha }} \
+            -n aikernel-core || echo "Deployment not ready"
+
+          # Scale canary
+          kubectl scale deployment/orchestration-kernel-canary --replicas=1 -n aikernel-core || echo "Canary not configured"
+
+      - name: Monitor canary
+        run: |
+          # Monitor for 5 minutes
+          echo "Monitoring canary deployment..."
+          sleep 300
+
+          # Check error rates (customize based on your metrics)
+          # kubectl run metric-check --rm -i --restart=Never --image=curlimages/curl -- \
+          #   curl http://prometheus.aikernel-monitoring:9090/api/v1/query?query=...
+
+      - name: Promote or rollback
+        run: |
+          # Check canary health
+          CANARY_HEALTHY=true
+
+          if [ "$CANARY_HEALTHY" = true ]; then
+            echo "Promoting canary to production..."
+            kubectl rollout resume deployment/orchestration-kernel -n aikernel-core || true
+          else
+            echo "Rolling back canary..."
+            kubectl rollout undo deployment/orchestration-kernel -n aikernel-core || true
+          fi

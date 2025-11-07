@@ -1,0 +1,344 @@
+---
+# Main API Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: aikernel-gateway
+  namespace: aikernel-core
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  selector:
+    istio: ingressgateway  # Use Istio ingress gateway
+  servers:
+    # HTTP server (redirects to HTTPS)
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*.aikernel.io"  # Update with your domain
+        - "api.aikernel.io"
+      tls:
+        httpsRedirect: true  # Redirect all HTTP to HTTPS
+
+    # HTTPS server
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      hosts:
+        - "*.aikernel.io"
+        - "api.aikernel.io"
+      tls:
+        mode: SIMPLE  # Enable TLS
+        credentialName: aikernel-tls-cert  # Certificate secret (create with cert-manager)
+        minProtocolVersion: TLSV1_3  # Enforce TLS 1.3
+        cipherSuites:
+          - ECDHE-RSA-AES256-GCM-SHA384
+          - ECDHE-RSA-AES128-GCM-SHA256
+---
+# Gateway for monitoring services
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: monitoring-gateway
+  namespace: aikernel-monitoring
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 443
+        name: https-grafana
+        protocol: HTTPS
+      hosts:
+        - "grafana.aikernel.io"
+      tls:
+        mode: SIMPLE
+        credentialName: grafana-tls-cert
+        minProtocolVersion: TLSV1_3
+    - port:
+        number: 443
+        name: https-jaeger
+        protocol: HTTPS
+      hosts:
+        - "jaeger.aikernel.io"
+      tls:
+        mode: SIMPLE
+        credentialName: jaeger-tls-cert
+        minProtocolVersion: TLSV1_3
+---
+# VirtualService for API routes
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-routes
+  namespace: aikernel-core
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  hosts:
+    - "api.aikernel.io"
+  gateways:
+    - aikernel-gateway
+  http:
+    # Health check endpoint
+    - match:
+        - uri:
+            exact: /health
+      route:
+        - destination:
+            host: orchestration-kernel  # Will be created when we deploy the kernel
+            port:
+              number: 8080
+      timeout: 5s
+
+    # API v1 routes
+    - match:
+        - uri:
+            prefix: /api/v1/catalog
+      route:
+        - destination:
+            host: orchestration-kernel
+            port:
+              number: 8080
+      timeout: 30s
+      retries:
+        attempts: 3
+        perTryTimeout: 10s
+        retryOn: 5xx,reset,connect-failure,refused-stream
+
+    - match:
+        - uri:
+            prefix: /api/v1/identity
+      route:
+        - destination:
+            host: orchestration-kernel
+            port:
+              number: 8080
+      timeout: 30s
+
+    - match:
+        - uri:
+            prefix: /api/v1/secrets
+      route:
+        - destination:
+            host: orchestration-kernel
+            port:
+              number: 8080
+      timeout: 30s
+
+    - match:
+        - uri:
+            prefix: /api/v1/ai
+      route:
+        - destination:
+            host: orchestration-kernel
+            port:
+              number: 8080
+      timeout: 120s  # Longer timeout for AI operations
+
+    # Default route
+    - route:
+        - destination:
+            host: orchestration-kernel
+            port:
+              number: 8080
+      timeout: 30s
+---
+# VirtualService for Grafana
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: grafana
+  namespace: aikernel-monitoring
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  hosts:
+    - "grafana.aikernel.io"
+  gateways:
+    - monitoring-gateway
+  http:
+    - route:
+        - destination:
+            host: grafana
+            port:
+              number: 3000
+---
+# VirtualService for Jaeger
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: jaeger
+  namespace: aikernel-monitoring
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  hosts:
+    - "jaeger.aikernel.io"
+  gateways:
+    - monitoring-gateway
+  http:
+    - route:
+        - destination:
+            host: jaeger-query
+            port:
+              number: 16686
+---
+# DestinationRule for API with circuit breaker
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: orchestration-kernel
+  namespace: aikernel-core
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  host: orchestration-kernel
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+      http:
+        http1MaxPendingRequests: 1000
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 100
+    loadBalancer:
+      simple: LEAST_REQUEST  # Load balance based on least outstanding requests
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+---
+# DestinationRule for PostgreSQL with connection pooling
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: postgres
+  namespace: aikernel-data
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  host: postgres-primary
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 200
+        connectTimeout: 5s
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: x-user-id  # Session affinity based on user
+---
+# DestinationRule for Redis with connection pooling
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: redis
+  namespace: aikernel-data
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  host: redis-master
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 500
+        connectTimeout: 1s
+    loadBalancer:
+      simple: ROUND_ROBIN
+---
+# ServiceEntry for external services (example: OpenAI API)
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: openai-api
+  namespace: aikernel-ai
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  hosts:
+    - api.openai.com
+  ports:
+    - number: 443
+      name: https
+      protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# ServiceEntry for Anthropic API
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: anthropic-api
+  namespace: aikernel-ai
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  hosts:
+    - api.anthropic.com
+  ports:
+    - number: 443
+      name: https
+      protocol: HTTPS
+  location: MESH_EXTERNAL
+  resolution: DNS
+---
+# Egress Gateway for external API calls
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: aikernel-egress
+  namespace: aikernel-ai
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  selector:
+    istio: egressgateway
+  servers:
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      hosts:
+        - api.openai.com
+        - api.anthropic.com
+      tls:
+        mode: PASSTHROUGH
+---
+# VirtualService for egress traffic
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: external-ai-apis
+  namespace: aikernel-ai
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  hosts:
+    - api.openai.com
+    - api.anthropic.com
+  gateways:
+    - aikernel-egress
+    - mesh  # Also applies to sidecar proxies
+  tls:
+    - match:
+        - port: 443
+          sniHosts:
+            - api.openai.com
+            - api.anthropic.com
+      route:
+        - destination:
+            host: istio-egressgateway.istio-system.svc.cluster.local
+            port:
+              number: 443
+          weight: 100

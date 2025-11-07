@@ -1,0 +1,183 @@
+---
+# LoadBalancer for Istio Ingress Gateway (Main API Gateway)
+# This is already configured in Istio installation, but here for reference
+apiVersion: v1
+kind: Service
+metadata:
+  name: istio-ingressgateway-lb
+  namespace: istio-system
+  labels:
+    app: istio-ingressgateway
+    app.kubernetes.io/part-of: ai-kernel
+  annotations:
+    # Cloud provider specific annotations (uncomment and modify as needed)
+    # AWS
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    # GCP
+    # cloud.google.com/load-balancer-type: "External"
+    # Azure
+    # service.beta.kubernetes.io/azure-load-balancer-internal: "false"
+spec:
+  type: LoadBalancer
+  selector:
+    app: istio-ingressgateway
+    istio: ingressgateway
+  ports:
+    - name: http2
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+    - name: https
+      port: 443
+      targetPort: 8443
+      protocol: TCP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800  # 3 hours
+---
+# LoadBalancer for Grafana (Monitoring UI)
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-lb
+  namespace: aikernel-monitoring
+  labels:
+    app: grafana
+    app.kubernetes.io/part-of: ai-kernel
+  annotations:
+    # Add description
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Name=aikernel-grafana"
+spec:
+  type: LoadBalancer
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+  sessionAffinity: ClientIP
+---
+# LoadBalancer for Jaeger Query UI (Distributed Tracing)
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-query-lb
+  namespace: aikernel-monitoring
+  labels:
+    app: jaeger
+    component: query
+    app.kubernetes.io/part-of: ai-kernel
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Name=aikernel-jaeger"
+spec:
+  type: LoadBalancer
+  selector:
+    app: jaeger
+    component: query
+  ports:
+    - name: http
+      port: 80
+      targetPort: 16686
+      protocol: TCP
+---
+# LoadBalancer for Prometheus (Metrics)
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-lb
+  namespace: aikernel-monitoring
+  labels:
+    app: prometheus
+    app.kubernetes.io/part-of: ai-kernel
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Name=aikernel-prometheus"
+spec:
+  type: LoadBalancer
+  selector:
+    app: prometheus
+  ports:
+    - name: http
+      port: 80
+      targetPort: 9090
+      protocol: TCP
+---
+# LoadBalancer for ArgoCD Server (GitOps UI)
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-server-lb
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-server
+    app.kubernetes.io/part-of: ai-kernel
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Name=aikernel-argocd"
+    # SSL/TLS passthrough for ArgoCD
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: argocd-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+    - name: https
+      port: 443
+      targetPort: 8080
+      protocol: TCP
+  sessionAffinity: ClientIP
+---
+# LoadBalancer for Neo4j Browser (Optional - Development/Admin Access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j-lb
+  namespace: aikernel-data
+  labels:
+    app: neo4j
+    app.kubernetes.io/part-of: ai-kernel
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Name=aikernel-neo4j"
+spec:
+  type: LoadBalancer
+  selector:
+    app: neo4j
+  ports:
+    - name: http
+      port: 7474
+      targetPort: 7474
+      protocol: TCP
+    - name: bolt
+      port: 7687
+      targetPort: 7687
+      protocol: TCP
+---
+# LoadBalancer for Vault (Secrets Management - Use with Caution)
+# Note: In production, consider using internal access only
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-lb
+  namespace: aikernel-security
+  labels:
+    app: vault
+    app.kubernetes.io/part-of: ai-kernel
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: "Name=aikernel-vault"
+    # For production, consider internal-only access
+    # service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: vault
+  ports:
+    - name: http
+      port: 8200
+      targetPort: 8200
+      protocol: TCP
+  sessionAffinity: ClientIP
