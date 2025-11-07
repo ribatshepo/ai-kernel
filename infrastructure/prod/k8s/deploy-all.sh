@@ -14,31 +14,12 @@ NC='\033[0m' # No Color
 
 # Configuration
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
-ENV_FILE="$PROJECT_ROOT/.env"
-
 DRY_RUN="${DRY_RUN:-false}"
 SKIP_ISTIO="${SKIP_ISTIO:-false}"
 SKIP_ARGOCD="${SKIP_ARGOCD:-false}"
 SKIP_DASHBOARD="${SKIP_DASHBOARD:-false}"
 SKIP_HARBOR="${SKIP_HARBOR:-false}"
 SKIP_ARTIFACTORY="${SKIP_ARTIFACTORY:-false}"
-
-# Load environment variables from .env if it exists
-if [ -f "$ENV_FILE" ]; then
-    echo -e "${GREEN}→${NC} Loading environment variables from .env..."
-    set -a
-    source "$ENV_FILE"
-    set +a
-    echo -e "${GREEN}✓${NC} Environment variables loaded"
-else
-    echo -e "${YELLOW}⚠${NC} No .env file found. Some manifests may have placeholder values."
-    echo -e "${YELLOW}→${NC} To use environment variable injection:"
-    echo -e "   1. Copy .env.example to .env: cp .env.example .env"
-    echo -e "   2. Edit .env with your actual values"
-    echo -e "   3. Run this script again"
-    echo ""
-fi
 
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║  AI Kernel Platform - Infrastructure Deployment         ║${NC}"
@@ -52,29 +33,17 @@ print_header() {
     echo ""
 }
 
-# Function to apply Kubernetes manifests with environment variable substitution
+# Function to apply Kubernetes manifests
 apply_manifests() {
     local file=$1
     local description=$2
 
     echo -e "${GREEN}→${NC} Applying $description..."
 
-    # Check if envsubst is available
-    if command -v envsubst &> /dev/null; then
-        # Apply with environment variable substitution
-        if [ "$DRY_RUN" = "true" ]; then
-            envsubst < "$file" | kubectl apply --dry-run=client -f -
-        else
-            envsubst < "$file" | kubectl apply -f -
-        fi
+    if [ "$DRY_RUN" = "true" ]; then
+        kubectl apply -f "$file" --dry-run=client
     else
-        # Fallback to direct apply without substitution
-        echo -e "${YELLOW}⚠${NC} envsubst not found, applying without variable substitution"
-        if [ "$DRY_RUN" = "true" ]; then
-            kubectl apply -f "$file" --dry-run=client
-        else
-            kubectl apply -f "$file"
-        fi
+        kubectl apply -f "$file"
     fi
 
     if [ $? -eq 0 ]; then
@@ -132,17 +101,6 @@ if ! command -v kubectl &> /dev/null; then
     exit 1
 fi
 echo -e "${GREEN}✓${NC} kubectl found"
-
-echo -e "${GREEN}→${NC} Checking envsubst (for environment variable substitution)..."
-if ! command -v envsubst &> /dev/null; then
-    echo -e "${YELLOW}⚠${NC} envsubst not found. Install gettext package for variable substitution:"
-    echo -e "   Ubuntu/Debian: sudo apt-get install gettext-base"
-    echo -e "   CentOS/RHEL:   sudo yum install gettext"
-    echo -e "   macOS:         brew install gettext"
-    echo -e "${YELLOW}→${NC} Continuing without environment variable substitution..."
-else
-    echo -e "${GREEN}✓${NC} envsubst found"
-fi
 
 echo -e "${GREEN}→${NC} Checking cluster connection..."
 if ! kubectl cluster-info &> /dev/null; then
@@ -294,7 +252,7 @@ for ns in aikernel-data aikernel-security aikernel-monitoring istio-system argoc
     if kubectl get namespace $ns &> /dev/null; then
         echo -e "${GREEN}→${NC} Namespace: $ns"
         kubectl get pods -n $ns 2>/dev/null | grep -v "NAME" | awk '{print "  "$1" - "$3}' || echo "  No pods found"
-    fi
+    fio
 done
 
 echo ""
