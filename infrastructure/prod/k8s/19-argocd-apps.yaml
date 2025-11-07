@@ -1,0 +1,161 @@
+---
+# Application for core orchestration services (to be created later)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aikernel-core
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: aikernel
+  source:
+    repoURL: https://github.com/ribatshepo/ai-kernel.git
+    targetRevision: HEAD
+    path: src/orchestration/k8s  # Will be created when we build the .NET application
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: aikernel-core
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+---
+# Application for AI services (to be created later)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aikernel-ai
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: aikernel
+  source:
+    repoURL: https://github.com/ribatshepo/ai-kernel.git
+    targetRevision: HEAD
+    path: src/intelligence/k8s  # Will be created when we build the Python application
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: aikernel-ai
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+---
+# Application for frontend (to be created later)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aikernel-frontend
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: aikernel
+  source:
+    repoURL: https://github.com/ribatshepo/ai-kernel.git
+    targetRevision: HEAD
+    path: src/frontend/k8s  # Will be created when we build the Next.js application
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: aikernel-core
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+---
+# Notification configuration for deployment events
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  # Slack notification template
+  template.app-deployed: |
+    message: |
+      Application {{.app.metadata.name}} is now running new version.
+      {{if eq .serviceType "slack"}}:white_check_mark:{{end}} Application {{.app.metadata.name}} is now running new version.
+    slack:
+      attachments: |
+        [{
+          "title": "{{ .app.metadata.name}}",
+          "title_link":"{{.context.argocdUrl}}/applications/{{.app.metadata.name}}",
+          "color": "#18be52",
+          "fields": [
+          {
+            "title": "Sync Status",
+            "value": "{{.app.status.sync.status}}",
+            "short": true
+          },
+          {
+            "title": "Repository",
+            "value": "{{.app.spec.source.repoURL}}",
+            "short": true
+          },
+          {
+            "title": "Revision",
+            "value": "{{.app.status.sync.revision}}",
+            "short": true
+          }
+          {{range $index, $c := .app.status.conditions}}
+          {{if not $index}},{{end}}
+          {{if $index}},{{end}}
+          {
+            "title": "{{$c.type}}",
+            "value": "{{$c.message}}",
+            "short": true
+          }
+          {{end}}
+          ]
+        }]
+
+  # Trigger for successful sync
+  trigger.on-deployed: |
+    - description: Application is synced and healthy
+      send:
+      - app-deployed
+      when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+
+  # Slack service configuration (update with your webhook URL)
+  service.slack: |
+    token: $slack-token
+
+# Secret for Slack token (create separately)
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-notifications-secret
+  namespace: argocd
+type: Opaque
+stringData:
+  slack-token: "CHANGE_ME"  # Replace with actual Slack webhook URL

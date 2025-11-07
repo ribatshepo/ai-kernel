@@ -1,0 +1,783 @@
+---
+# JFrog Artifactory - Production Grade Artifact Repository
+# Universal artifact repository supporting all major package formats
+
+# Namespace for Artifactory (can use existing aikernel-registry)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-artifactory
+  labels:
+    name: aikernel-artifactory
+    istio-injection: enabled
+    app.kubernetes.io/part-of: ai-kernel
+
+---
+# Artifactory PostgreSQL Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: artifactory-database
+  namespace: aikernel-artifactory
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "CHANGE_ME_ARTIFACTORY_DB_PASSWORD"
+  POSTGRES_USER: "artifactory"
+  POSTGRES_DB: "artifactory"
+
+---
+# Artifactory Master Key Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: artifactory-master-key
+  namespace: aikernel-artifactory
+type: Opaque
+stringData:
+  # Generate with: openssl rand -hex 32
+  master-key: "CHANGE_ME_MASTER_KEY_64_CHARS_HEX"
+
+---
+# Artifactory Join Key Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: artifactory-join-key
+  namespace: aikernel-artifactory
+type: Opaque
+stringData:
+  # Generate with: openssl rand -hex 32
+  join-key: "CHANGE_ME_JOIN_KEY_64_CHARS_HEX"
+
+---
+# Artifactory License Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: artifactory-license
+  namespace: aikernel-artifactory
+type: Opaque
+stringData:
+  # Paste your Artifactory license here
+  # Get from: https://jfrog.com/start-free/
+  artifactory.lic: |
+    PASTE_YOUR_LICENSE_HERE
+
+---
+# Artifactory PostgreSQL StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: artifactory-database
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory-database
+    component: database
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  serviceName: artifactory-database
+  replicas: 1
+  selector:
+    matchLabels:
+      app: artifactory-database
+  template:
+    metadata:
+      labels:
+        app: artifactory-database
+        component: database
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "4000m"
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: artifactory-database
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: artifactory-database
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: artifactory-database
+              key: POSTGRES_DB
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: database-data
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -U artifactory
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -U artifactory
+          initialDelaySeconds: 5
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: database-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Gi
+
+---
+# Artifactory Database Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: artifactory-database
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory-database
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+  selector:
+    app: artifactory-database
+  clusterIP: None
+
+---
+# Artifactory ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: artifactory-config
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory
+data:
+  system.yaml: |
+    configVersion: 1
+    shared:
+      security:
+        joinKey: "{{ .Values.joinKey }}"
+      database:
+        type: postgresql
+        driver: org.postgresql.Driver
+        url: "jdbc:postgresql://artifactory-database:5432/artifactory"
+        username: artifactory
+      node:
+        id: "artifactory-node"
+        ip: "{{ .Values.nodeIP }}"
+    router:
+      entrypoints:
+        internalPort: 8046
+        externalPort: 8082
+
+  binarystore.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <config version="2">
+        <chain>
+            <provider id="cache-fs" type="cache-fs">
+                <provider id="file-system" type="file-system">
+                    <baseDataDir>/var/opt/jfrog/artifactory/data/filestore</baseDataDir>
+                    <fileStoreDir>filestore</fileStoreDir>
+                </provider>
+            </provider>
+        </chain>
+    </config>
+
+---
+# Artifactory StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: artifactory
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory
+    component: primary
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  serviceName: artifactory
+  replicas: 1
+  selector:
+    matchLabels:
+      app: artifactory
+      component: primary
+  template:
+    metadata:
+      labels:
+        app: artifactory
+        component: primary
+    spec:
+      serviceAccountName: artifactory
+      securityContext:
+        fsGroup: 1030
+        runAsUser: 1030
+      initContainers:
+      - name: wait-for-db
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h artifactory-database -p 5432 -U artifactory; do
+            echo "Waiting for database..."
+            sleep 2
+          done
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: artifactory-database
+              key: POSTGRES_PASSWORD
+      - name: prepare-storage
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          mkdir -p /var/opt/jfrog/artifactory/data/filestore
+          mkdir -p /var/opt/jfrog/artifactory/etc
+          chown -R 1030:1030 /var/opt/jfrog/artifactory
+        volumeMounts:
+        - name: artifactory-data
+          mountPath: /var/opt/jfrog/artifactory
+      containers:
+      - name: artifactory
+        image: releases-docker.jfrog.io/jfrog/artifactory-pro:7.77.5
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        env:
+        - name: JF_SHARED_DATABASE_TYPE
+          value: "postgresql"
+        - name: JF_SHARED_DATABASE_URL
+          value: "jdbc:postgresql://artifactory-database:5432/artifactory"
+        - name: JF_SHARED_DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: artifactory-database
+              key: POSTGRES_USER
+        - name: JF_SHARED_DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: artifactory-database
+              key: POSTGRES_PASSWORD
+        - name: JF_SHARED_DATABASE_DRIVER
+          value: "org.postgresql.Driver"
+        - name: ARTIFACTORY_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: artifactory-master-key
+              key: master-key
+        - name: JF_SHARED_SECURITY_JOINKEY
+          valueFrom:
+            secretKeyRef:
+              name: artifactory-join-key
+              key: join-key
+        - name: EXTRA_JAVA_OPTIONS
+          value: "-Xms2g -Xmx4g"
+        ports:
+        - containerPort: 8081
+          name: http
+        - containerPort: 8082
+          name: router
+        volumeMounts:
+        - name: artifactory-data
+          mountPath: /var/opt/jfrog/artifactory
+        - name: artifactory-config
+          mountPath: /var/opt/jfrog/artifactory/etc/system.yaml
+          subPath: system.yaml
+        - name: artifactory-config
+          mountPath: /var/opt/jfrog/artifactory/etc/artifactory/binarystore.xml
+          subPath: binarystore.xml
+        - name: artifactory-license
+          mountPath: /var/opt/jfrog/artifactory/etc/artifactory/artifactory.lic
+          subPath: artifactory.lic
+        livenessProbe:
+          httpGet:
+            path: /router/api/v1/system/health
+            port: 8082
+            scheme: HTTP
+          initialDelaySeconds: 180
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 10
+        readinessProbe:
+          httpGet:
+            path: /router/api/v1/system/health
+            port: 8082
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 10
+      volumes:
+      - name: artifactory-config
+        configMap:
+          name: artifactory-config
+      - name: artifactory-license
+        secret:
+          secretName: artifactory-license
+  volumeClaimTemplates:
+  - metadata:
+      name: artifactory-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 500Gi
+
+---
+# Artifactory Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: artifactory
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory
+
+---
+# Artifactory Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: artifactory
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8081
+    targetPort: 8081
+    protocol: TCP
+    name: http
+  - port: 8082
+    targetPort: 8082
+    protocol: TCP
+    name: router
+  selector:
+    app: artifactory
+    component: primary
+
+---
+# Artifactory Nginx Deployment (Reverse Proxy)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: artifactory-nginx
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory-nginx
+    component: nginx
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: artifactory-nginx
+  template:
+    metadata:
+      labels:
+        app: artifactory-nginx
+        component: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25-alpine
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 443
+          name: https
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: artifactory-nginx-config
+
+---
+# Artifactory Nginx ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: artifactory-nginx-config
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory-nginx
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx.pid;
+
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+
+        access_log /var/log/nginx/access.log main;
+
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        client_max_body_size 0;
+
+        # Disable buffering for large uploads
+        proxy_buffering off;
+        proxy_request_buffering off;
+
+        upstream artifactory {
+            server artifactory:8081;
+        }
+
+        server {
+            listen 80;
+            server_name artifactory.aikernel.local;
+
+            location / {
+                proxy_pass http://artifactory;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+
+                # Timeouts
+                proxy_connect_timeout 600;
+                proxy_send_timeout 600;
+                proxy_read_timeout 600;
+                send_timeout 600;
+            }
+        }
+    }
+
+---
+# Artifactory Nginx Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: artifactory-nginx
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory-nginx
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  - port: 443
+    targetPort: 443
+    protocol: TCP
+    name: https
+  selector:
+    app: artifactory-nginx
+
+---
+# Artifactory Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: artifactory-ingress
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - artifactory.aikernel.local
+    secretName: artifactory-tls
+  rules:
+  - host: artifactory.aikernel.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: artifactory-nginx
+            port:
+              number: 80
+
+---
+# Artifactory NodePort Service (Alternative for on-prem)
+apiVersion: v1
+kind: Service
+metadata:
+  name: artifactory-nodeport
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory
+spec:
+  type: NodePort
+  selector:
+    app: artifactory-nginx
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30250
+    name: http
+
+---
+# Artifactory Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: artifactory-backup
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory-backup
+    component: backup
+spec:
+  schedule: "0 1 * * *" # Run at 1 AM daily
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: artifactory-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: backup
+            image: postgres:15-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              PGPASSWORD=$POSTGRES_PASSWORD pg_dump \
+                -h artifactory-database \
+                -U artifactory \
+                -d artifactory \
+                -F c \
+                -f /backup/artifactory_db_${timestamp}.dump
+
+              # Keep only last 7 days of backups
+              find /backup -name "artifactory_db_*.dump" -mtime +7 -delete
+
+              echo "Backup completed: artifactory_db_${timestamp}.dump"
+              ls -lh /backup/
+            env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: artifactory-database
+                  key: POSTGRES_PASSWORD
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "250m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: artifactory-backup-storage
+
+---
+# Artifactory Backup Storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: artifactory-backup-storage
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory-backup
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 200Gi
+  storageClassName: nfs-storage
+
+---
+# Artifactory Repository Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: artifactory-repositories
+  namespace: aikernel-artifactory
+  labels:
+    app: artifactory
+data:
+  repositories.json: |
+    {
+      "repositories": [
+        {
+          "key": "docker-local",
+          "rclass": "local",
+          "packageType": "docker",
+          "description": "Local Docker repository",
+          "dockerApiVersion": "V2"
+        },
+        {
+          "key": "docker-remote",
+          "rclass": "remote",
+          "packageType": "docker",
+          "url": "https://registry-1.docker.io",
+          "description": "Remote Docker Hub proxy",
+          "dockerApiVersion": "V2"
+        },
+        {
+          "key": "docker",
+          "rclass": "virtual",
+          "packageType": "docker",
+          "repositories": ["docker-local", "docker-remote"],
+          "description": "Virtual Docker repository",
+          "dockerApiVersion": "V2"
+        },
+        {
+          "key": "helm-local",
+          "rclass": "local",
+          "packageType": "helm",
+          "description": "Local Helm repository"
+        },
+        {
+          "key": "helm-remote",
+          "rclass": "remote",
+          "packageType": "helm",
+          "url": "https://charts.helm.sh/stable",
+          "description": "Remote Helm proxy"
+        },
+        {
+          "key": "helm",
+          "rclass": "virtual",
+          "packageType": "helm",
+          "repositories": ["helm-local", "helm-remote"],
+          "description": "Virtual Helm repository"
+        },
+        {
+          "key": "nuget-local",
+          "rclass": "local",
+          "packageType": "nuget",
+          "description": "Local NuGet repository"
+        },
+        {
+          "key": "nuget-remote",
+          "rclass": "remote",
+          "packageType": "nuget",
+          "url": "https://api.nuget.org/v3/index.json",
+          "description": "Remote NuGet proxy"
+        },
+        {
+          "key": "nuget",
+          "rclass": "virtual",
+          "packageType": "nuget",
+          "repositories": ["nuget-local", "nuget-remote"],
+          "description": "Virtual NuGet repository"
+        },
+        {
+          "key": "npm-local",
+          "rclass": "local",
+          "packageType": "npm",
+          "description": "Local NPM repository"
+        },
+        {
+          "key": "npm-remote",
+          "rclass": "remote",
+          "packageType": "npm",
+          "url": "https://registry.npmjs.org",
+          "description": "Remote NPM proxy"
+        },
+        {
+          "key": "npm",
+          "rclass": "virtual",
+          "packageType": "npm",
+          "repositories": ["npm-local", "npm-remote"],
+          "description": "Virtual NPM repository"
+        },
+        {
+          "key": "generic-local",
+          "rclass": "local",
+          "packageType": "generic",
+          "description": "Local generic repository for build artifacts"
+        },
+        {
+          "key": "releases-local",
+          "rclass": "local",
+          "packageType": "generic",
+          "description": "Release artifacts repository"
+        }
+      ]
+    }

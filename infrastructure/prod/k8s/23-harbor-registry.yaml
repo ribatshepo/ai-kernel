@@ -1,0 +1,1037 @@
+---
+# Harbor Container Registry - Production Grade Configuration
+# Harbor is an open-source container image registry with security and compliance features
+
+# Namespace for Harbor (if not using existing namespace)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-registry
+  labels:
+    name: aikernel-registry
+    istio-injection: enabled
+    app.kubernetes.io/part-of: ai-kernel
+
+---
+# Harbor PostgreSQL Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-database
+  namespace: aikernel-registry
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "CHANGE_ME_HARBOR_DB_PASSWORD"
+  POSTGRES_USER: "harbor"
+  POSTGRES_DB: "registry"
+
+---
+# Harbor Core Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-core
+  namespace: aikernel-registry
+type: Opaque
+stringData:
+  HARBOR_ADMIN_PASSWORD: "CHANGE_ME_HARBOR_ADMIN_PASSWORD"
+  secretKey: "CHANGE_ME_SECRET_KEY_32_CHARS_MIN"
+  # Generate with: openssl rand -base64 32
+
+---
+# Harbor Redis Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-redis
+  namespace: aikernel-registry
+type: Opaque
+stringData:
+  REDIS_PASSWORD: "CHANGE_ME_HARBOR_REDIS_PASSWORD"
+
+---
+# Harbor Registry Storage Secret (for S3-compatible object storage)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-registry-storage
+  namespace: aikernel-registry
+type: Opaque
+stringData:
+  # For MinIO, S3, or compatible object storage
+  REGISTRY_STORAGE_S3_ACCESSKEY: "CHANGE_ME_S3_ACCESS_KEY"
+  REGISTRY_STORAGE_S3_SECRETKEY: "CHANGE_ME_S3_SECRET_KEY"
+
+---
+# Harbor PostgreSQL StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: harbor-database
+  namespace: aikernel-registry
+  labels:
+    app: harbor-database
+    component: database
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  serviceName: harbor-database
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harbor-database
+  template:
+    metadata:
+      labels:
+        app: harbor-database
+        component: database
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+      containers:
+      - name: database
+        image: postgres:15-alpine
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database
+              key: POSTGRES_DB
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: database-data
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -U harbor
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - pg_isready -U harbor
+          initialDelaySeconds: 5
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: database-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 50Gi
+
+---
+# Harbor Database Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-database
+  namespace: aikernel-registry
+  labels:
+    app: harbor-database
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+  selector:
+    app: harbor-database
+  clusterIP: None
+
+---
+# Harbor Redis StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: harbor-redis
+  namespace: aikernel-registry
+  labels:
+    app: harbor-redis
+    component: redis
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  serviceName: harbor-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harbor-redis
+  template:
+    metadata:
+      labels:
+        app: harbor-redis
+        component: redis
+    spec:
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        command:
+        - redis-server
+        - --requirepass
+        - $(REDIS_PASSWORD)
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-redis
+              key: REDIS_PASSWORD
+        ports:
+        - containerPort: 6379
+          name: redis
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - -a
+            - $(REDIS_PASSWORD)
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - -a
+            - $(REDIS_PASSWORD)
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# Harbor Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-redis
+  namespace: aikernel-registry
+  labels:
+    app: harbor-redis
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  selector:
+    app: harbor-redis
+  clusterIP: None
+
+---
+# Harbor Core ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-core
+  namespace: aikernel-registry
+  labels:
+    app: harbor-core
+data:
+  app.conf: |
+    appname = Harbor
+    runmode = prod
+
+  config.yaml: |
+    ---
+    # Configuration file for Harbor
+
+    # The external URL for Harbor core service.
+    external_url: https://harbor.aikernel.local
+
+    # The internal TLS used for harbor components secure communicating.
+    internal_tls:
+      enabled: false
+
+    # HTTP settings
+    http:
+      port: 8080
+
+    # Database settings
+    database:
+      type: postgresql
+      postgresql:
+        host: harbor-database
+        port: 5432
+        database: registry
+        username: harbor
+        ssl_mode: disable
+        max_idle_conns: 50
+        max_open_conns: 1000
+
+    # Redis settings
+    redis:
+      host: harbor-redis:6379
+      db_index: 0
+
+    # Storage backend settings
+    storage_service:
+      ca_bundle: ""
+      redirect:
+        disabled: false
+
+    # Trivy scanner settings
+    trivy:
+      ignore_unfixed: false
+      skip_update: false
+      insecure: false
+
+    # jobservice configuration
+    jobservice:
+      max_job_workers: 10
+
+    # notification configuration
+    notification:
+      webhook_job_max_retry: 10
+
+    # Log configurations
+    log:
+      level: info
+      local:
+        rotation_count: 50
+        rotation_size: 200M
+        location: /var/log/harbor
+
+    # Authentication mode
+    auth_mode: db_auth
+
+    # LDAP authentication (optional)
+    # ldap:
+    #   url: ldap://ldap.example.com
+    #   search_dn: ""
+    #   search_password: ""
+    #   base_dn: "ou=people,dc=example,dc=com"
+    #   uid: uid
+
+    # Email settings (optional)
+    email:
+      host: smtp.example.com
+      port: 25
+      username: ""
+      password: ""
+      from: "harbor@aikernel.local"
+      ssl: false
+      insecure: true
+
+    # Harbor admin initial password
+    harbor_admin_password: Harbor12345
+
+    # GC (Garbage Collection) settings
+    # Run GC at 3 AM daily
+    gc_time_window_hours: 2
+
+---
+# Harbor Core Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor-core
+  namespace: aikernel-registry
+  labels:
+    app: harbor-core
+    component: core
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harbor-core
+  template:
+    metadata:
+      labels:
+        app: harbor-core
+        component: core
+    spec:
+      securityContext:
+        runAsUser: 10000
+        fsGroup: 10000
+      containers:
+      - name: core
+        image: goharbor/harbor-core:v2.10.0
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        env:
+        - name: CORE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core
+              key: secretKey
+        - name: JOBSERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core
+              key: secretKey
+        - name: DATABASE_TYPE
+          value: "postgresql"
+        - name: POSTGRESQL_HOST
+          value: "harbor-database"
+        - name: POSTGRESQL_PORT
+          value: "5432"
+        - name: POSTGRESQL_DATABASE
+          value: "registry"
+        - name: POSTGRESQL_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database
+              key: POSTGRES_USER
+        - name: POSTGRESQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-database
+              key: POSTGRES_PASSWORD
+        - name: REDIS_HOST
+          value: "harbor-redis:6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-redis
+              key: REDIS_PASSWORD
+        - name: EXT_ENDPOINT
+          value: "https://harbor.aikernel.local"
+        - name: CORE_URL
+          value: "http://harbor-core:8080"
+        - name: JOBSERVICE_URL
+          value: "http://harbor-jobservice:8080"
+        - name: REGISTRY_URL
+          value: "http://harbor-registry:5000"
+        - name: TOKEN_SERVICE_URL
+          value: "http://harbor-core:8080/service/token"
+        - name: HARBOR_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core
+              key: HARBOR_ADMIN_PASSWORD
+        - name: LOG_LEVEL
+          value: "info"
+        - name: CONFIG_PATH
+          value: "/etc/core/app.conf"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/core/app.conf
+          subPath: app.conf
+        - name: secret-key
+          mountPath: /etc/core/key
+        - name: psc
+          mountPath: /etc/core/ca
+        livenessProbe:
+          httpGet:
+            path: /api/v2.0/ping
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 300
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/v2.0/ping
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 20
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: harbor-core
+      - name: secret-key
+        secret:
+          secretName: harbor-core
+          items:
+          - key: secretKey
+            path: key
+      - name: psc
+        emptyDir: {}
+
+---
+# Harbor Core Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-core
+  namespace: aikernel-registry
+  labels:
+    app: harbor-core
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  selector:
+    app: harbor-core
+  type: ClusterIP
+
+---
+# Harbor Registry Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor-registry
+  namespace: aikernel-registry
+  labels:
+    app: harbor-registry
+    component: registry
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harbor-registry
+  template:
+    metadata:
+      labels:
+        app: harbor-registry
+        component: registry
+    spec:
+      securityContext:
+        runAsUser: 10000
+        fsGroup: 10000
+      containers:
+      - name: registry
+        image: goharbor/registry-photon:v2.10.0
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        env:
+        - name: REGISTRY_HTTP_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core
+              key: secretKey
+        ports:
+        - containerPort: 5000
+          name: registry
+        - containerPort: 5001
+          name: debug
+        volumeMounts:
+        - name: registry-data
+          mountPath: /storage
+        - name: registry-config
+          mountPath: /etc/registry/config.yml
+          subPath: config.yml
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 5000
+            scheme: HTTP
+          initialDelaySeconds: 300
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 5000
+            scheme: HTTP
+          initialDelaySeconds: 20
+          periodSeconds: 10
+      - name: registryctl
+        image: goharbor/harbor-registryctl:v2.10.0
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        env:
+        - name: CORE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core
+              key: secretKey
+        - name: JOBSERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core
+              key: secretKey
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: registry-data
+          mountPath: /storage
+        - name: registry-config
+          mountPath: /etc/registry/config.yml
+          subPath: config.yml
+        - name: registryctl-config
+          mountPath: /etc/registryctl/config.yml
+          subPath: config.yml
+      volumes:
+      - name: registry-data
+        persistentVolumeClaim:
+          claimName: harbor-registry-data
+      - name: registry-config
+        configMap:
+          name: harbor-registry
+      - name: registryctl-config
+        configMap:
+          name: harbor-registry
+
+---
+# Harbor Registry PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-registry-data
+  namespace: aikernel-registry
+  labels:
+    app: harbor-registry
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 500Gi
+  storageClassName: nfs-storage
+
+---
+# Harbor Registry ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-registry
+  namespace: aikernel-registry
+  labels:
+    app: harbor-registry
+data:
+  config.yml: |
+    version: 0.1
+    log:
+      level: info
+      fields:
+        service: registry
+    storage:
+      filesystem:
+        rootdirectory: /storage
+      delete:
+        enabled: true
+      cache:
+        blobdescriptor: redis
+      maintenance:
+        uploadpurging:
+          enabled: true
+          age: 168h
+          interval: 24h
+          dryrun: false
+      redirect:
+        disable: false
+    redis:
+      addr: harbor-redis:6379
+      db: 1
+      dialtimeout: 10ms
+      readtimeout: 10ms
+      writetimeout: 10ms
+      pool:
+        maxidle: 16
+        maxactive: 64
+        idletimeout: 300s
+    http:
+      addr: :5000
+      relativeurls: false
+      draintimeout: 0
+    auth:
+      token:
+        issuer: harbor-token-issuer
+        realm: https://harbor.aikernel.local/service/token
+        rootcertbundle: /etc/registry/root.crt
+        service: harbor-registry
+    validation:
+      disabled: true
+    compatibility:
+      schema1:
+        enabled: true
+
+---
+# Harbor Registry Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-registry
+  namespace: aikernel-registry
+  labels:
+    app: harbor-registry
+spec:
+  ports:
+  - port: 5000
+    targetPort: 5000
+    name: registry
+  - port: 8080
+    targetPort: 8080
+    name: registryctl
+  selector:
+    app: harbor-registry
+  type: ClusterIP
+
+---
+# Harbor JobService Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor-jobservice
+  namespace: aikernel-registry
+  labels:
+    app: harbor-jobservice
+    component: jobservice
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harbor-jobservice
+  template:
+    metadata:
+      labels:
+        app: harbor-jobservice
+        component: jobservice
+    spec:
+      securityContext:
+        runAsUser: 10000
+        fsGroup: 10000
+      containers:
+      - name: jobservice
+        image: goharbor/harbor-jobservice:v2.10.0
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        env:
+        - name: CORE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core
+              key: secretKey
+        - name: JOBSERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: harbor-core
+              key: secretKey
+        - name: CORE_URL
+          value: "http://harbor-core:8080"
+        - name: REGISTRY_URL
+          value: "http://harbor-registry:5000"
+        - name: REDIS_URL
+          value: "redis://harbor-redis:6379/2"
+        - name: HTTP_PROXY
+          value: ""
+        - name: HTTPS_PROXY
+          value: ""
+        - name: NO_PROXY
+          value: "harbor-core,harbor-registry,harbor-database,harbor-redis"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: jobservice-config
+          mountPath: /etc/jobservice/config.yml
+          subPath: config.yml
+        - name: job-logs
+          mountPath: /var/log/jobs
+        livenessProbe:
+          httpGet:
+            path: /api/v1/stats
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 300
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/v1/stats
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 20
+          periodSeconds: 10
+      volumes:
+      - name: jobservice-config
+        configMap:
+          name: harbor-jobservice
+      - name: job-logs
+        persistentVolumeClaim:
+          claimName: harbor-jobservice-logs
+
+---
+# Harbor JobService PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-jobservice-logs
+  namespace: aikernel-registry
+  labels:
+    app: harbor-jobservice
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: nfs-storage
+
+---
+# Harbor JobService ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-jobservice
+  namespace: aikernel-registry
+  labels:
+    app: harbor-jobservice
+data:
+  config.yml: |
+    ---
+    protocol: "http"
+    port: 8080
+    worker_pool:
+      workers: 10
+      backend: "redis"
+      redis_pool:
+        redis_url: "redis://harbor-redis:6379/2"
+        namespace: "harbor_job_service_namespace"
+    job_loggers:
+      - name: "FILE"
+        level: "INFO"
+        settings:
+          base_dir: "/var/log/jobs"
+        sweeper:
+          duration: 168 # hours
+          settings:
+            work_dir: "/var/log/jobs"
+    loggers:
+      - name: "STD_OUTPUT"
+        level: "INFO"
+
+---
+# Harbor JobService Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-jobservice
+  namespace: aikernel-registry
+  labels:
+    app: harbor-jobservice
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  selector:
+    app: harbor-jobservice
+  type: ClusterIP
+
+---
+# Harbor Portal Deployment (Web UI)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harbor-portal
+  namespace: aikernel-registry
+  labels:
+    app: harbor-portal
+    component: portal
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harbor-portal
+  template:
+    metadata:
+      labels:
+        app: harbor-portal
+        component: portal
+    spec:
+      securityContext:
+        runAsUser: 10000
+        fsGroup: 10000
+      containers:
+      - name: portal
+        image: goharbor/harbor-portal:v2.10.0
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 8080
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 300
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 20
+          periodSeconds: 10
+
+---
+# Harbor Portal Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-portal
+  namespace: aikernel-registry
+  labels:
+    app: harbor-portal
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  selector:
+    app: harbor-portal
+  type: ClusterIP
+
+---
+# Harbor Ingress (HTTPS access)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: harbor-ingress
+  namespace: aikernel-registry
+  labels:
+    app: harbor
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - harbor.aikernel.local
+    secretName: harbor-tls
+  rules:
+  - host: harbor.aikernel.local
+    http:
+      paths:
+      - path: /api/
+        pathType: Prefix
+        backend:
+          service:
+            name: harbor-core
+            port:
+              number: 8080
+      - path: /service/
+        pathType: Prefix
+        backend:
+          service:
+            name: harbor-core
+            port:
+              number: 8080
+      - path: /v2/
+        pathType: Prefix
+        backend:
+          service:
+            name: harbor-registry
+            port:
+              number: 5000
+      - path: /chartrepo/
+        pathType: Prefix
+        backend:
+          service:
+            name: harbor-core
+            port:
+              number: 8080
+      - path: /c/
+        pathType: Prefix
+        backend:
+          service:
+            name: harbor-core
+            port:
+              number: 8080
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: harbor-portal
+            port:
+              number: 8080
+
+---
+# Harbor NodePort Service (Alternative for on-prem)
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-nodeport
+  namespace: aikernel-registry
+  labels:
+    app: harbor
+spec:
+  type: NodePort
+  selector:
+    app: harbor-portal
+  ports:
+  - port: 80
+    targetPort: 8080
+    nodePort: 30200
+    name: http

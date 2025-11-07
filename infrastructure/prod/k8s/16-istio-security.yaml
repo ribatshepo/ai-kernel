@@ -1,0 +1,323 @@
+---
+# Enable strict mTLS across the mesh
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default-mtls
+  namespace: istio-system
+spec:
+  mtls:
+    mode: STRICT  # Enforce mTLS for all services
+---
+# PeerAuthentication for core namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: core-mtls
+  namespace: aikernel-core
+spec:
+  mtls:
+    mode: STRICT
+---
+# PeerAuthentication for data namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: data-mtls
+  namespace: aikernel-data
+spec:
+  mtls:
+    mode: STRICT
+---
+# PeerAuthentication for security namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: security-mtls
+  namespace: aikernel-security
+spec:
+  mtls:
+    mode: STRICT
+---
+# PeerAuthentication for AI namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: ai-mtls
+  namespace: aikernel-ai
+spec:
+  mtls:
+    mode: STRICT
+---
+# Authorization policy - deny all by default
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: istio-system
+spec:
+  {} # Empty spec denies all traffic by default
+---
+# Allow Prometheus to scrape metrics
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-prometheus-scraping
+  namespace: istio-system
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: ["aikernel-monitoring"]
+            principals: ["cluster.local/ns/aikernel-monitoring/sa/prometheus"]
+      to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/stats/prometheus"]
+---
+# Allow Jaeger trace collection
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-jaeger-tracing
+  namespace: istio-system
+spec:
+  action: ALLOW
+  rules:
+    - to:
+        - operation:
+            ports: ["15020"]  # Envoy admin port
+---
+# Allow ingress gateway traffic
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      app: istio-ingressgateway
+  action: ALLOW
+  rules:
+    - to:
+        - operation:
+            ports: ["8080", "8443"]
+---
+# Core namespace - allow internal communication
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-internal-core
+  namespace: aikernel-core
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: ["aikernel-core", "istio-system"]
+---
+# Data namespace - allow access from core and AI namespaces
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-data-access
+  namespace: aikernel-data
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: ["aikernel-core", "aikernel-ai", "aikernel-security", "aikernel-data"]
+---
+# Security namespace - allow access from core namespace only
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-security-access
+  namespace: aikernel-security
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: ["aikernel-core", "aikernel-security"]
+---
+# AI namespace - allow access from core namespace
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ai-access
+  namespace: aikernel-ai
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: ["aikernel-core", "aikernel-ai"]
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+---
+# Request authentication - JWT validation (to be configured with identity provider)
+apiVersion: security.istio.io/v1beta1
+kind: RequestAuthentication
+metadata:
+  name: jwt-authentication
+  namespace: aikernel-core
+spec:
+  selector:
+    matchLabels:
+      app: orchestration-kernel  # Will be created when we deploy the kernel
+  jwtRules:
+    - issuer: "https://aikernel.io"  # Update with actual issuer
+      jwksUri: "https://aikernel.io/.well-known/jwks.json"  # Update with actual JWKS URI
+      audiences:
+        - "aikernel-api"
+      forwardOriginalToken: true
+---
+# Authorization policy for authenticated users
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: require-jwt
+  namespace: aikernel-core
+spec:
+  selector:
+    matchLabels:
+      app: orchestration-kernel
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            requestPrincipals: ["*"]  # Require valid JWT
+      when:
+        - key: request.auth.claims[iss]
+          values: ["https://aikernel.io"]
+---
+# Rate limiting configuration (requires Envoy filter)
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: rate-limit-filter
+  namespace: istio-system
+spec:
+  workloadSelector:
+    labels:
+      app: istio-ingressgateway
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: "envoy.filters.network.http_connection_manager"
+              subFilter:
+                name: "envoy.filters.http.router"
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.local_ratelimit
+          typed_config:
+            "@type": type.googleapis.com/udpa.type.v1.TypedStruct
+            type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+            value:
+              stat_prefix: http_local_rate_limiter
+              token_bucket:
+                max_tokens: 1000
+                tokens_per_fill: 1000
+                fill_interval: 1s
+              filter_enabled:
+                runtime_key: local_rate_limit_enabled
+                default_value:
+                  numerator: 100
+                  denominator: HUNDRED
+              filter_enforced:
+                runtime_key: local_rate_limit_enforced
+                default_value:
+                  numerator: 100
+                  denominator: HUNDRED
+              response_headers_to_add:
+                - append: false
+                  header:
+                    key: x-local-rate-limit
+                    value: 'true'
+---
+# Telemetry configuration for distributed tracing
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: mesh-telemetry
+  namespace: istio-system
+spec:
+  # Tracing configuration
+  tracing:
+    - providers:
+        - name: jaeger
+      randomSamplingPercentage: 100.0  # 100% sampling, reduce in production
+      customTags:
+        environment:
+          literal:
+            value: production
+        cluster:
+          literal:
+            value: aikernel
+  # Metrics configuration
+  metrics:
+    - providers:
+        - name: prometheus
+      overrides:
+        - match:
+            metric: ALL_METRICS
+          tagOverrides:
+            response_code:
+              operation: UPSERT
+---
+# Network policy for pod-to-pod communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-istio-ingress
+  namespace: aikernel-core
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: istio-system
+        - namespaceSelector:
+            matchLabels:
+              name: aikernel-core
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 15020  # Envoy health check
+---
+# Network policy for monitoring access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring
+  namespace: aikernel-core
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: aikernel-monitoring
+      ports:
+        - protocol: TCP
+          port: 9090  # Metrics
+        - protocol: TCP
+          port: 15020  # Health

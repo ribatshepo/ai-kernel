@@ -1,0 +1,170 @@
+---
+# Kubernetes Dashboard RBAC Configuration
+# This file provides additional RBAC configurations for the dashboard
+
+# Namespace-specific admin (example: aikernel-core namespace only)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aikernel-core-admin
+  namespace: kubernetes-dashboard
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aikernel-core-admin
+  namespace: aikernel-core
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: aikernel-core-admin
+    namespace: kubernetes-dashboard
+---
+# Namespace-specific admin for data layer
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aikernel-data-admin
+  namespace: kubernetes-dashboard
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aikernel-data-admin
+  namespace: aikernel-data
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: aikernel-data-admin
+    namespace: kubernetes-dashboard
+---
+# Namespace-specific admin for monitoring
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aikernel-monitoring-admin
+  namespace: kubernetes-dashboard
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aikernel-monitoring-admin
+  namespace: aikernel-monitoring
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: aikernel-monitoring-admin
+    namespace: kubernetes-dashboard
+---
+# Monitoring viewer role (can view metrics and dashboards)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring-viewer
+  namespace: kubernetes-dashboard
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: monitoring-viewer
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+rules:
+  # View pods and services
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  # View deployments and statefulsets
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  # View metrics
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: monitoring-viewer
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: monitoring-viewer
+subjects:
+  - kind: ServiceAccount
+    name: monitoring-viewer
+    namespace: kubernetes-dashboard
+---
+# Developer role (limited write access)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: developer
+  namespace: kubernetes-dashboard
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: developer
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+rules:
+  # View resources
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  # View and manage deployments
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Execute into pods
+  - apiGroups: [""]
+    resources: ["pods/exec", "pods/log"]
+    verbs: ["create", "get"]
+  # View events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: developer
+  labels:
+    app.kubernetes.io/part-of: ai-kernel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: developer
+subjects:
+  - kind: ServiceAccount
+    name: developer
+    namespace: kubernetes-dashboard

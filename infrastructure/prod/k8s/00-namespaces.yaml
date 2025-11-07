@@ -1,0 +1,50 @@
+---
+# Core namespace for orchestration kernel and core services
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-core
+  labels:
+    name: aikernel-core
+    app.kubernetes.io/part-of: ai-kernel
+    istio-injection: enabled
+---
+# Data layer namespace for databases and storage
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-data
+  labels:
+    name: aikernel-data
+    app.kubernetes.io/part-of: ai-kernel
+    istio-injection: enabled
+---
+# Monitoring namespace for observability stack
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-monitoring
+  labels:
+    name: aikernel-monitoring
+    app.kubernetes.io/part-of: ai-kernel
+    istio-injection: disabled  # Monitoring tools don't need service mesh
+---
+# Security namespace for secrets and identity management
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-security
+  labels:
+    name: aikernel-security
+    app.kubernetes.io/part-of: ai-kernel
+    istio-injection: enabled
+---
+# AI namespace for intelligence and inference services
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aikernel-ai
+  labels:
+    name: aikernel-ai
+    app.kubernetes.io/part-of: ai-kernel
+    istio-injection: enabled
