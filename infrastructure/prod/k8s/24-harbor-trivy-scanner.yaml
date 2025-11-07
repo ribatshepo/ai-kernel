@@ -1,0 +1,492 @@
+---
+# Trivy Scanner for Harbor - Production Grade Security Scanning
+# Trivy scans container images for vulnerabilities, secrets, and misconfigurations
+
+# Trivy StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: harbor-trivy
+  namespace: aikernel-registry
+  labels:
+    app: harbor-trivy
+    component: trivy
+    app.kubernetes.io/part-of: ai-kernel
+spec:
+  serviceName: harbor-trivy
+  replicas: 1
+  selector:
+    matchLabels:
+      app: harbor-trivy
+  template:
+    metadata:
+      labels:
+        app: harbor-trivy
+        component: trivy
+    spec:
+      securityContext:
+        runAsUser: 10000
+        fsGroup: 10000
+      containers:
+      - name: trivy
+        image: goharbor/trivy-adapter-photon:v2.10.0
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        env:
+        - name: SCANNER_LOG_LEVEL
+          value: "info"
+        - name: SCANNER_TRIVY_CACHE_DIR
+          value: "/home/scanner/.cache/trivy"
+        - name: SCANNER_TRIVY_REPORTS_DIR
+          value: "/home/scanner/.cache/reports"
+        - name: SCANNER_TRIVY_DEBUG_MODE
+          value: "false"
+        - name: SCANNER_TRIVY_VULN_TYPE
+          value: "os,library"
+        - name: SCANNER_TRIVY_TIMEOUT
+          value: "5m0s"
+        - name: SCANNER_TRIVY_GITHUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: harbor-trivy
+              key: githubToken
+              optional: true
+        - name: SCANNER_TRIVY_SEVERITY
+          value: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
+        - name: SCANNER_TRIVY_IGNORE_UNFIXED
+          value: "false"
+        - name: SCANNER_TRIVY_SKIP_UPDATE
+          value: "false"
+        - name: SCANNER_TRIVY_INSECURE
+          value: "false"
+        - name: SCANNER_API_SERVER_ADDR
+          value: ":8080"
+        - name: SCANNER_STORE_REDIS_URL
+          value: "redis://harbor-redis:6379"
+        - name: SCANNER_STORE_REDIS_NAMESPACE
+          value: "harbor.scanner.trivy:store"
+        - name: SCANNER_JOB_QUEUE_REDIS_URL
+          value: "redis://harbor-redis:6379"
+        - name: SCANNER_JOB_QUEUE_REDIS_NAMESPACE
+          value: "harbor.scanner.trivy:job-queue"
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: trivy-cache
+          mountPath: /home/scanner/.cache
+        livenessProbe:
+          httpGet:
+            path: /probe/healthy
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 10
+        readinessProbe:
+          httpGet:
+            path: /probe/ready
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+  volumeClaimTemplates:
+  - metadata:
+      name: trivy-cache
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+
+---
+# Harbor Trivy Secret (Optional GitHub token for rate limit increase)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harbor-trivy
+  namespace: aikernel-registry
+type: Opaque
+stringData:
+  # Optional: GitHub token for higher API rate limits
+  # Get from: https://github.com/settings/tokens
+  githubToken: ""
+
+---
+# Harbor Trivy Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: harbor-trivy
+  namespace: aikernel-registry
+  labels:
+    app: harbor-trivy
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  selector:
+    app: harbor-trivy
+  type: ClusterIP
+
+---
+# Harbor Security Scan Policy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-scan-policy
+  namespace: aikernel-registry
+  labels:
+    app: harbor
+data:
+  policy.yaml: |
+    # Harbor Image Scan Policy
+    # This policy is configured via Harbor UI or API
+
+    # Recommended settings:
+    # 1. Scan on push: Enabled
+    # 2. Prevent vulnerable images from running: Enabled
+    # 3. Severity threshold: High or Critical
+    # 4. CVE allowlist: Maintain project-specific allowlists
+    # 5. Scan all on daily basis: Enabled
+
+    # Example CVE Allowlist (configure via Harbor UI):
+    # - CVE-2021-1234 (expires: 2024-12-31, reason: false positive)
+    # - CVE-2021-5678 (expires: 2024-06-30, reason: patched in runtime)
+
+---
+# Harbor Image Retention Policy ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-retention-policy
+  namespace: aikernel-registry
+  labels:
+    app: harbor
+data:
+  policy.json: |
+    {
+      "algorithm": "or",
+      "rules": [
+        {
+          "disabled": false,
+          "action": "retain",
+          "template": "latestPushedK",
+          "params": {
+            "latestPushedK": 10
+          },
+          "tag_selectors": [
+            {
+              "kind": "doublestar",
+              "decoration": "matches",
+              "pattern": "**"
+            }
+          ],
+          "scope_selectors": {
+            "repository": [
+              {
+                "kind": "doublestar",
+                "decoration": "matches",
+                "pattern": "**"
+              }
+            ]
+          }
+        },
+        {
+          "disabled": false,
+          "action": "retain",
+          "template": "latestPulledN",
+          "params": {
+            "latestPulledN": 5
+          },
+          "tag_selectors": [
+            {
+              "kind": "doublestar",
+              "decoration": "matches",
+              "pattern": "release-*"
+            }
+          ],
+          "scope_selectors": {
+            "repository": [
+              {
+                "kind": "doublestar",
+                "decoration": "matches",
+                "pattern": "**"
+              }
+            ]
+          }
+        },
+        {
+          "disabled": false,
+          "action": "retain",
+          "template": "nDaysSinceLastPull",
+          "params": {
+            "nDaysSinceLastPull": 30
+          },
+          "tag_selectors": [
+            {
+              "kind": "doublestar",
+              "decoration": "matches",
+              "pattern": "prod-*"
+            }
+          ],
+          "scope_selectors": {
+            "repository": [
+              {
+                "kind": "doublestar",
+                "decoration": "matches",
+                "pattern": "**"
+              }
+            ]
+          }
+        }
+      ],
+      "trigger": {
+        "kind": "Schedule",
+        "settings": {
+          "cron": "0 0 * * *"
+        }
+      }
+    }
+
+---
+# Harbor Replication Policy ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-replication-policy
+  namespace: aikernel-registry
+  labels:
+    app: harbor
+data:
+  policy.json: |
+    {
+      "name": "replicate-to-dr",
+      "description": "Replicate production images to DR site",
+      "src_registry": {
+        "id": 0
+      },
+      "dest_registry": {
+        "id": 1
+      },
+      "dest_namespace": "production",
+      "trigger": {
+        "type": "event_based",
+        "trigger_settings": {
+          "cron": ""
+        }
+      },
+      "filters": [
+        {
+          "type": "name",
+          "value": "prod-*"
+        },
+        {
+          "type": "tag",
+          "value": "v*"
+        }
+      ],
+      "deletion": false,
+      "override": true,
+      "enabled": true,
+      "speed": -1
+    }
+
+---
+# Harbor Garbage Collection CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: harbor-gc
+  namespace: aikernel-registry
+  labels:
+    app: harbor-gc
+    component: gc
+spec:
+  schedule: "0 2 * * *" # Run at 2 AM daily
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: harbor-gc
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 10000
+            fsGroup: 10000
+          containers:
+          - name: gc
+            image: goharbor/harbor-core:v2.10.0
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Trigger garbage collection via Harbor API
+              curl -X POST \
+                -H "Authorization: Basic $(echo -n 'admin:$HARBOR_ADMIN_PASSWORD' | base64)" \
+                -H "Content-Type: application/json" \
+                http://harbor-core:8080/api/v2.0/system/gc/schedule \
+                -d '{
+                  "schedule": {
+                    "type": "Manual"
+                  },
+                  "delete_untagged": true,
+                  "workers": 2
+                }'
+            env:
+            - name: HARBOR_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: harbor-core
+                  key: HARBOR_ADMIN_PASSWORD
+            resources:
+              requests:
+                memory: "128Mi"
+                cpu: "100m"
+              limits:
+                memory: "256Mi"
+                cpu: "200m"
+
+---
+# Harbor Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: harbor-backup
+  namespace: aikernel-registry
+  labels:
+    app: harbor-backup
+    component: backup
+spec:
+  schedule: "0 1 * * *" # Run at 1 AM daily
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: harbor-backup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: backup
+            image: postgres:15-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              PGPASSWORD=$POSTGRES_PASSWORD pg_dump \
+                -h harbor-database \
+                -U harbor \
+                -d registry \
+                -F c \
+                -f /backup/harbor_db_${timestamp}.dump
+
+              # Keep only last 7 days of backups
+              find /backup -name "harbor_db_*.dump" -mtime +7 -delete
+
+              echo "Backup completed: harbor_db_${timestamp}.dump"
+              ls -lh /backup/
+            env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: harbor-database
+                  key: POSTGRES_PASSWORD
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "250m"
+              limits:
+                memory: "512Mi"
+                cpu: "500m"
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: harbor-backup-storage
+
+---
+# Harbor Backup Storage PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: harbor-backup-storage
+  namespace: aikernel-registry
+  labels:
+    app: harbor-backup
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: nfs-storage
+
+---
+# Harbor Image Signature Verification Policy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-notary-config
+  namespace: aikernel-registry
+  labels:
+    app: harbor
+data:
+  config.json: |
+    {
+      "trust_pinning": {
+        "certs": {}
+      },
+      "remote_server": {
+        "url": "https://harbor.aikernel.local",
+        "root_ca": "",
+        "tls_client_cert": "",
+        "tls_client_key": ""
+      }
+    }
+
+  # Content Trust / Image Signing Policy
+  # Configure via Harbor UI:
+  # 1. Enable Content Trust per project
+  # 2. Configure Cosign for artifact signing
+  # 3. Set deployment security policies
+
+  signing-policy.yaml: |
+    # Image Signing Requirements
+    # All production images must be signed
+
+    rules:
+      - name: require-signature-prod
+        match:
+          namespace: production
+        require:
+          - signatures:
+              count: 1
+              key: cosign-public-key
+
+      - name: require-signature-staging
+        match:
+          namespace: staging
+        require:
+          - signatures:
+              count: 1
+              key: cosign-public-key
